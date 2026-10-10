@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in Rembrandt doesn't work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please note: **this is not a photo editing service.** Nobody here will edit
+        your photos. Download Rembrandt and edit them yourself; it's free.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: "I opened a .CR3 file and the colours look green. I expected them to look like the camera's preview."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import a photo from …
+        2. Open the Masks panel …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Rembrandt version
+      description: Settings › About shows it.
+      placeholder: "0.3.11"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where do you run it?
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+        - Self-hosted server, in a browser
+        - Web, in a browser
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera and file type (if it's about a photo)
+      placeholder: "Sony A7 IV, .ARW"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or anything else
+      description: Screenshots help a lot. If a specific file fails, say so; you can share it privately if needed.

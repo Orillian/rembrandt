@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: What Rembrandt is (and isn't)
+    url: https://github.com/thesnarkitecht/rembrandt#quick-facts
+    about: A photo editor that runs on your computer. Not Photoshop, and not an AI service that edits photos for you. Read this first.
+  - name: Report a security problem
+    url: https://github.com/thesnarkitecht/rembrandt/blob/main/SECURITY.md
+    about: Please report security issues privately (see SECURITY.md), not as a public issue.

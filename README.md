@@ -5,6 +5,7 @@
 No account needed, no subscription, no “we’ve updated our terms” emails.</p>
 <p align="center">
   <a href="#download"><b>Download</b></a> ·
+  <a href="#quick-facts">Quick facts</a> ·
   <a href="#self-host-it">Self-host</a> ·
   <a href="#features">Features</a> ·
   <a href="#how-it-compares">Compare</a> ·
@@ -35,6 +36,22 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
     <td align="center"><sub><b>Before / after</b>: split or side by side</sub></td>
   </tr>
 </table>
+
+## Quick facts
+
+| | |
+|---|---|
+| **What it is** | A photo editor and library for your own photos, like Lightroom: develop RAWs, adjust light and colour, mask, retouch, organise, export. |
+| **What it isn't** | Not Photoshop: no layers, compositing, text or drawing. Not an AI image generator: it can't add snow, people or objects that aren't in the photo, and it doesn't make pictures from a prompt. |
+| **The AI** | Helps you edit what's there: selects people, skies and subjects, removes blemishes, denoises, sharpens, upscales, picks your best shots. Runs on your computer. |
+| **Typing or talking** | You can ask for edits in words ("warmer", "lens blur down") or by voice. It understands editing terms, not general requests. |
+| **Your photos** | Stay on your computer. Originals are never changed; edits are saved as standard XMP that Lightroom and darktable read. |
+| **Cost** | Free, no account. Only the optional Cloud sync between devices is paid. |
+| **Runs on** | macOS, Windows and Linux, or self-hosted and used in any browser. |
+| **Coming from Lightroom** | Imports your catalog (edits, keywords, collections) and your presets (.xmp and .lrtemplate). |
+| **Not here yet** | Print, Book, Slideshow and Map modules, tethered capture, plugins. |
+| **Licence** | GPL-3.0-or-later. Free to use, study, change and share. |
+| **Found a bug?** | [Open an issue](https://github.com/thesnarkitecht/rembrandt/issues/new/choose) with your version (Settings › About) and how to make it happen. Please don't send photos to be edited. |
 
 ## Download
 
@@ -67,7 +84,8 @@ checks it against the published SHA-256 sums, and restarts the server.
 ## Features
 
 - **Ask in words**: type “warmer and a bit brighter”, “down exposure by ten points”, “shadows +25”
-  or “paste the edits from the previous photo” (Ctrl/⌘ K). A small Rembrandt in dots thinks it over,
+  or “paste the edits from the previous photo” (Ctrl/⌘ K), or say it: press the microphone in the
+  side panel and say “bring lens blur down”. A small Rembrandt in dots thinks it over,
   then makes each change while you watch the sliders move. It runs on your device: a vocabulary, not
   a language model.
 - **Edit the photo itself**: drag up or down on any part of the picture to lighten or darken that
@@ -84,8 +102,12 @@ checks it against the published SHA-256 sums, and restarts the server.
   (Settings › Performance). The queue survives restarts.
 - **Merge**: HDR from brackets, panoramas and focus stacks, each to a RAW-like DNG.
 - **RAW** from 1,000+ cameras, developed on the GPU: tone, colour, curves, grading, dehaze, detail.
-- **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth.
-- **Remove**: heal and clone spots and strokes; Rembrandt picks a matching source for you.
+- **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth, and
+  People: face skin, body skin, hair, eyebrows, eye whites, irises, lips, teeth and clothes.
+- **Remove**: heal and clone spots and strokes; Rembrandt picks a matching source for you. **Remove
+  blemishes** finds and heals them on portraits in one click and keeps moles and beauty marks.
+- **Pick the best**: select a shoot and Rembrandt groups the bursts, picks the sharpest frame with
+  open eyes in each and rejects the blurry and eyes-closed ones. Your own flags are kept; one Undo.
 - **Lens corrections**: the camera's built-in profile from Fujifilm and Sony RAWs, or one of 1,500
   lens profiles from [Lensfun](https://lensfun.github.io) (distortion, vignetting, chromatic
   aberration), plus manual distortion and vignetting for any photo. Auto straighten levels horizons.
@@ -93,7 +115,8 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Library**: albums, ratings, flags, colour labels, keywords, virtual copies, search, Find similar,
   sorting, keyboard shortcuts (or Lightroom's), one-click delete with Undo.
 - **Batch**: copy and paste edits to hundreds of photos, batch export, and presets that fit each
-  photo's exposure. Watch a folder to apply a preset and album to new photos as they arrive.
+  photo's exposure. Imports Lightroom presets (.xmp, .lrtemplate and zip packs). Watch a folder to
+  apply a preset and album to new photos as they arrive.
 - **Share how**: a before/after page with a slider, a replay video of the edit, or the recipe inside
   the exported file so anyone can see (and reuse) how it was edited.
 - **Bring your photos**: folders, Lightroom Classic (edits, keywords, labels, virtual copies,

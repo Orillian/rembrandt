@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest something Rembrandt should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rembrandt is a photo editor like Lightroom: it develops and adjusts photos. It doesn't generate
+        images or add things that aren't in the photo (snow, people, skies from nowhere), and it isn't a
+        Photoshop-style layer editor. Requests in that direction will be closed.
+  - type: textarea
+    id: want
+    attributes:
+      label: What would you like to do?
+      description: Describe the task, not just the button. What are you trying to get done with your photos?
+      placeholder: "When I shoot a wedding I want to quickly hide all the near-duplicate frames."
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you do it today?
+      description: In Rembrandt, Lightroom or another app. What's slow or missing?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Examples, screenshots, links to how another app does it.
