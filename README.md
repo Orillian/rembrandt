@@ -12,7 +12,7 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
   <a href="#build">Build</a>
 </p>
 
-<p align="center"><img src="docs/screenshots/editor.jpg" alt="Editing a photo in Rembrandt" width="900"></p>
+<p align="center"><a href="https://rembrandteditor.dev/video/demo.mp4"><img src="docs/demo.jpg" alt="Demo video: open a photo, say “golden hour and shadows plus 25”, type “lens blur up a lot”, compare before and after (26 seconds)" width="900"></a><br><sub>▶ Watch the 26-second demo</sub></p>
 
 <table>
   <tr>
