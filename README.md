@@ -37,22 +37,6 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
   </tr>
 </table>
 
-## Quick facts
-
-| | |
-|---|---|
-| **What it is** | A photo editor and library for your own photos, like Lightroom: develop RAWs, adjust light and colour, mask, retouch, organise, export. |
-| **What it isn't** | Not Photoshop: no layers, compositing, text or drawing. Not an AI image generator: it can't add snow, people or objects that aren't in the photo, and it doesn't make pictures from a prompt. |
-| **The AI** | Helps you edit what's there: selects people, skies and subjects, removes blemishes, denoises, sharpens, upscales, picks your best shots. Runs on your computer. |
-| **Typing or talking** | You can ask for edits in words ("warmer", "lens blur down") or by voice. It understands editing terms, not general requests. |
-| **Your photos** | Stay on your computer. Originals are never changed; edits are saved as standard XMP that Lightroom and darktable read. |
-| **Cost** | Free, no account. Only the optional Cloud sync between devices is paid. |
-| **Runs on** | macOS, Windows and Linux, or self-hosted and used in any browser. |
-| **Coming from Lightroom** | Imports your catalog (edits, keywords, collections) and your presets (.xmp and .lrtemplate). |
-| **Not here yet** | Print, Book, Slideshow and Map modules, tethered capture, plugins. |
-| **Licence** | GPL-3.0-or-later. Free to use, study, change and share. |
-| **Found a bug?** | [Open an issue](https://github.com/thesnarkitecht/rembrandt/issues/new/choose) with your version (Settings › About) and how to make it happen. Please don't send photos to be edited. |
-
 ## Download
 
 | Platform | |
@@ -127,6 +111,22 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Cloud sync (optional, paid)**: turn it on in Settings to sync edits, albums and photos between
   your computers, the web and your phone. It's the only thing that needs an account, and the only
   thing that costs money; everything else stays free.
+
+## Quick facts
+
+| | |
+|---|---|
+| **What it is** | A RAW developer and photo library, in the same family as Lightroom Classic: develop, adjust, mask, retouch, organise and export your own photos. Every edit is non-destructive. |
+| **What it isn't** | A layer-based pixel editor like Photoshop or GIMP (no layers, text or painting), or a generative AI tool: it doesn't make images from a prompt or invent new objects. Its AI effects (fog, sun rays, lens blur, background replacement with a picture you choose) are built from each photo's own depth and subject. |
+| **The AI** | Selects people, faces, subjects, objects and depth for masks, removes blemishes, denoises, refocuses, upscales and picks your best shots. It all runs on your computer. |
+| **Typing or talking** | You can ask for edits in words ("warmer", "lens blur down") or by voice. It understands editing terms, not general requests. |
+| **Your photos** | Stay on your computer. Originals are never changed; edits are saved as standard XMP that Lightroom and darktable read. |
+| **Cost** | Free, no account. Only the optional Cloud sync between devices is paid. |
+| **Runs on** | macOS, Windows and Linux, or self-hosted and used in any browser. |
+| **Coming from Lightroom** | Imports your catalog (edits, keywords, collections) and your presets (.xmp and .lrtemplate). |
+| **Not here yet** | Print, Book, Slideshow and Map modules, tethered capture, plugins. |
+| **Licence** | GPL-3.0-or-later. Free to use, study, change and share. |
+| **Found a bug?** | [Open an issue](https://github.com/thesnarkitecht/rembrandt/issues/new/choose) with your version (Settings › About) and how to make it happen. Please don't send photos to be edited. |
 
 ## How it compares
 
