@@ -189,6 +189,11 @@ h1, h2, h3 { text-wrap: balance; }
 .workspace, .library, .plan-page { grid-row: 2; min-height: 0; }
 body[data-mode="library"] .workspace, body[data-mode="library"] .filmstrip { display: none; }
 body:not([data-mode="library"]) .library { display: none; }
+/* Switching Library ↔ Edit: the view that appears settles in (reduced motion turns it off above). */
+.library, .workspace { animation: view-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes view-in { from { opacity: 0; transform: translateY(6px); } }
+.sec.opening > .sec-body { animation: sec-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes sec-in { from { opacity: 0; transform: translateY(-4px); } }
 body:not([data-mode="plan"]) .plan-page { display: none; }
 body[data-mode="plan"] .workspace, body[data-mode="plan"] .library, body[data-mode="plan"] .filmstrip { display: none; }
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) var(--panel-w); background: var(--canvas); }

@@ -385,7 +385,29 @@ const app = {
   },
 
   // ------------------------------------------------------------ view
-  fitView() { this.view.fit = true; this.requestRender(); },
+  fitView(animate = false) {
+    if (animate) return this.animateView(this.view.fitScale, [0, 0], true);
+    cancelAnimationFrame(this._zoomAnim);
+    this.view.fit = true;
+    this.requestRender();
+  },
+  // Glide the view to a scale and pan (double-click, Fit, zoom keys); wheel and pinch stay direct.
+  animateView(scale, pan, fit = false) {
+    const v = this.view, from = { scale: v.scale, pan: [...v.pan] }, t0 = performance.now(), ms = 220;
+    cancelAnimationFrame(this._zoomAnim);
+    if (!this.img || matchMedia('(prefers-reduced-motion: reduce)').matches || !from.scale) { Object.assign(v, { scale, pan, fit }); this.requestRender(); return; }
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms), e = 1 - (1 - t) ** 3;
+      // Interpolate the scale in log space so zooming in and out feel the same speed.
+      v.scale = from.scale * (scale / from.scale) ** e;
+      v.pan = [from.pan[0] + (pan[0] - from.pan[0]) * e, from.pan[1] + (pan[1] - from.pan[1]) * e];
+      v.fit = t === 1 && fit;
+      this.renderNow();
+      if (t < 1) this._zoomAnim = requestAnimationFrame(step);
+    };
+    v.fit = false;
+    this._zoomAnim = requestAnimationFrame(step);
+  },
 
   // pane: {x0, w} in device px — the whole canvas, or one half in side-by-side compare.
   computeView(p, pane = { x0: 0, w: canvas.width }) {
@@ -419,22 +441,25 @@ const app = {
 
   outputMats(p, w, h) { return outputMatsFor(p, this.img.aspect, w, h); },
 
-  zoomTo(scale, sx, sy) {
+  zoomTo(scale, sx, sy, animate = false) {
     const v = this.view;
     const pane = v.pane || { x0: 0, w: canvas.width };
     const cw = pane.w, ch = canvas.height;
     if (sx == null) { sx = cw / 2; sy = ch / 2; } else sx = ((sx - pane.x0) % cw + cw) % cw;
     const ns = clamp(scale, v.fitScale * 0.5, this.engine.fullH * 16);
     const k = ns / v.scale;
-    v.pan = [sx - cw / 2 - (sx - cw / 2 - v.pan[0]) * k, sy - ch / 2 - (sy - ch / 2 - v.pan[1]) * k];
+    const pan = [sx - cw / 2 - (sx - cw / 2 - v.pan[0]) * k, sy - ch / 2 - (sy - ch / 2 - v.pan[1]) * k];
+    if (animate) { this.animateView(ns, pan); return; }
+    cancelAnimationFrame(this._zoomAnim);
+    v.pan = pan;
     v.scale = ns;
     v.fit = false;
     this.requestRender();
   },
   toggleZoom(sx, sy) {
     if (!this.img) return;
-    if (this.view.fit || this.view.scale < this.engine.fullH * 0.99) this.zoomTo(this.engine.fullH, sx, sy);
-    else this.fitView();
+    if (this.view.fit || this.view.scale < this.engine.fullH * 0.99) this.zoomTo(this.engine.fullH, sx, sy, true);
+    else this.fitView(true);
   },
 
   // ------------------------------------------------------------ rendering
@@ -2146,6 +2171,7 @@ viewer.addEventListener('pointerdown', (e) => {
       // A second finger turns whatever the first one started into a pinch (and undoes a brush stroke start).
       if (pointer?.kind === 'tool') pointer.tool.up();
       const st = pinchState();
+      cancelAnimationFrame(app._zoomAnim);
       pinch = { ...st, scale: app.view.scale, pan: [...app.view.pan] };
       if (app.view.fit) { app.view.fit = false; }
       pointer = null;
@@ -2164,6 +2190,7 @@ viewer.addEventListener('pointerdown', (e) => {
     return;
   }
   if (directOn(e) && direct.down(x, y)) { pointer = { kind: 'direct' }; return; }
+  cancelAnimationFrame(app._zoomAnim);   // grabbing the photo stops a zoom glide where it is
   pointer = { kind: 'pan', x, y, pan: [...app.view.pan], fit: app.view.fit, touch: e.pointerType === 'touch', t: performance.now() };
   viewer.classList.add('panning');
 });
@@ -2306,7 +2333,7 @@ $('btnExport').addEventListener('click', () => {
   openExport(app);
 });
 document.querySelectorAll('[data-mode-btn]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.modeBtn)));
-$('btnFit').addEventListener('click', () => app.fitView());
+$('btnFit').addEventListener('click', () => app.fitView(true));
 
 // Navigator & presets side panel (desktop). Hidden or shown with N; remembered.
 navSide = buildNavSide(app);
@@ -2324,7 +2351,7 @@ setNavSide((() => { try { return localStorage.getItem('rembrandt:navside') !== '
 $('btnNav').addEventListener('click', () => setNavSide(document.body.classList.contains('nav-off')));
 $('btnAsk').addEventListener('click', askWithWords);
 $('askKey').textContent = isMac ? '⌘K' : 'Ctrl K';
-$('btn100').addEventListener('click', () => app.img && app.zoomTo(app.engine.fullH));
+$('btn100').addEventListener('click', () => app.img && app.zoomTo(app.engine.fullH, null, null, true));
 // Cloud plan: upload originals that aren't online yet; free local space for ones that are.
 async function onlineKeys() {
   const rows = await listOnlineOriginals();
@@ -2508,7 +2535,7 @@ window.addEventListener('keydown', (e) => {
     case 'j': app.state.clip = !app.state.clip; syncClip(); break;
     case 'w': app.pickWhiteBalance(); break;
     case 'z': app.toggleZoom(); break;
-    case 'f': app.fitView(); break;
+    case 'f': app.fitView(true); break;
     case 'n': setNavSide(document.body.classList.contains('nav-off')); break;
     case '?': $('helpDialog').showModal(); break;
     case 'x': if (t === 'crop') app.panel.swap(); break;

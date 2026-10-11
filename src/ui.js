@@ -95,6 +95,8 @@ export function section(title, { id, open = true, onReset, right, badge, enabled
       for (const s of root.parentElement.querySelectorAll(':scope > .sec.open')) { s.classList.remove('open'); remember(s); }
     }
     root.classList.toggle('open');
+    // Opening slides the content in; only on the click, since panels rebuild often.
+    if (opening) { root.classList.add('opening'); body.addEventListener('animationend', () => root.classList.remove('opening'), { once: true }); }
     remember(root);
     try { localStorage.setItem('lumen:sections', JSON.stringify(openState)); } catch { /* ignore */ }
   };

@@ -16,7 +16,7 @@ export function buildNavSide(app) {
     const b = el('button', { class: 'nav-zoom', type: 'button' }, z.label);
     b.addEventListener('click', () => {
       if (!app.img) return;
-      if (!z.k) app.fitView(); else app.zoomTo(app.engine.fullH * z.k);
+      if (!z.k) app.fitView(true); else app.zoomTo(app.engine.fullH * z.k, null, null, true);
     });
     zoomRow.append(b);
     return b;
