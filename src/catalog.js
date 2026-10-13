@@ -58,18 +58,36 @@ export async function listPhotos() {
   return all.sort((a, b) => a.addedAt - b.addedAt);
 }
 
-export async function putPhoto(rec) {
-  await tx('photos', 'readwrite', (s) => s.put(rec));
+export function putPhoto(rec) {
+  queue();
+  pending.set(rec.id, { put: rec });
+  return written;
 }
 
-export async function updatePhoto(id, patch) {
+// New photos and patches made in the same tick are merged and written in one transaction: rating
+// or flagging 20,000 photos is one transaction, not 20,000 (44 s → 2 s).
+let pending = null, written = null;
+const queue = () => { if (!pending) { pending = new Map(); written = Promise.resolve().then(flushUpdates); } };
+export function updatePhoto(id, patch) {
+  queue();
+  const cur = pending.get(id);
+  if (cur?.put) cur.put = { ...cur.put, ...patch };       // a new photo and its first edits: one put
+  else pending.set(id, { patch: { ...cur?.patch, ...patch } });
+  return written;
+}
+async function flushUpdates() {
+  const batch = pending;
+  pending = null;
   const d = await db();
   if (!d) return;
   await new Promise((resolve, reject) => {
     const t = d.transaction('photos', 'readwrite');
     const s = t.objectStore('photos');
-    const g = s.get(id);
-    g.onsuccess = () => { if (g.result) s.put({ ...g.result, ...patch }); };
+    for (const [id, w] of batch) {
+      if (w.put) { s.put(w.put); continue; }
+      const g = s.get(id);
+      g.onsuccess = () => { if (g.result) s.put({ ...g.result, ...w.patch }); };
+    }
     t.oncomplete = resolve;
     t.onerror = () => reject(t.error);
   });

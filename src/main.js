@@ -1320,7 +1320,8 @@ async function applySource(e) {
   const lin = e.linear;
   const w = lin ? lin.w : e.bitmap.width, h = lin ? lin.h : e.bitmap.height;
   e.sample = lin ? { data: lin.preview.data, w: lin.preview.w, h: lin.preview.h } : e.sample || sampleData(e.bitmap);
-  e.stats = computeStats(e.sample);
+  // Scene statistics depend only on the pixels: kept until they change (the RAW develop arriving).
+  if (e.statsFor !== e.sample) { e.stats = computeStats(e.sample); e.statsFor = e.sample; }
   const aspect = w / h;
   if (app.img && app.params && Math.abs(app.img.aspect - aspect) > 1e-6) {
     // RAW and embedded preview can differ by a few pixels; keep the crop where it was.
@@ -2585,6 +2586,7 @@ function watchDesktopSignIn() {
   const t = window.__TAURI_INTERNALS__;
   if (!t) return;
   const check = async () => {
+    if (document.hidden) return;   // the code arrives as you come back to the app
     try {
       const r = await t.invoke('take_auth_code');
       if (!r?.code) return;

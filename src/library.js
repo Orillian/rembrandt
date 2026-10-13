@@ -183,7 +183,9 @@ export function buildLibrary(app, api) {
   // ---------------------------------------------------------------- header
   const header = el('div', { class: 'lib-header' });
   const search = el('input', { class: 'text-input lib-search', type: 'search', placeholder: 'Search photos', 'aria-label': 'Search photos', id: 'libSearch' });
-  search.addEventListener('input', () => { query = search.value.trim().toLowerCase(); refresh(); });
+  // Typing waits for a short pause before filtering: each refresh of a large library costs a frame or more.
+  let searchTimer = 0;
+  search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { query = search.value.trim().toLowerCase(); refresh(); }, app.images.length > 2000 ? 140 : 0); });
   search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { search.value = ''; query = ''; refresh(); search.blur(); } });
   // On a phone the sidebar is a drawer over the photos; on bigger screens it's a column you can hide.
   const sideBtn = iconButton('sidebar', 'Albums and collections', () => {
