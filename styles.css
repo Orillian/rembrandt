@@ -1342,3 +1342,18 @@ body[data-mode="library"] .ask-btn, body[data-mode="account"] .ask-btn { display
 .job-acts { display: flex; gap: 2px; }
 .progress.thin { height: 3px; margin-top: 5px; }
 .jobs-foot { margin: 8px 0 0; font-size: 11.5px; }
+
+/* Compare (src/compare-view.js): 2–4 photos side by side, zoom and pan linked. */
+.cmpv { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: var(--bg); outline: none; animation: view-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.cmpv-bar { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 10px 0 16px; border-bottom: 1px solid var(--edge); font-size: 13px; color: var(--text); }
+.cmpv-bar .hint { font-size: 12px; }
+.cmpv-grid { flex: 1; display: grid; gap: 2px; min-height: 0; background: var(--edge); }
+.cmpv-cell { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+.cmpv-frame { position: relative; flex: 1; overflow: hidden; cursor: zoom-in; touch-action: none; }
+.cmpv-photo { position: absolute; left: 0; top: 0; transform-origin: 0 0; image-rendering: auto; }
+.cmpv-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 13px; }
+.cmpv-foot { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 8px 0 12px; border-top: 2px solid transparent; font-size: 12px; color: var(--text-2); }
+.cmpv-cell.on .cmpv-foot { border-top-color: var(--accent-bg); color: var(--text); }
+.cmpv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmpv-flag.pick { color: var(--accent); font-weight: 600; }
+.cmpv-flag.reject { color: var(--dim); text-decoration: line-through; }

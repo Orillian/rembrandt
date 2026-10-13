@@ -12,6 +12,7 @@ import { initTheme, onThemeChange, cssRGB } from './theme.js';
 import { localAdjustments } from './local-adjust.js';
 import { ai, detectFaces } from './ai/ai.js';
 import { focusOf, sharpOf, FOCUS_PX, decide as cullDecide } from './cull.js';
+import { openCompare } from './compare-view.js';
 import { lensPass, chain, setBackgroundImage, hasBackgroundImage, quality as lensQuality, lensActive } from './ai/lens.js';
 import { refocusPass, refocusActive } from './ai/refocus.js';
 import { studioPass, motionPass } from './ai/studio.js';
@@ -2644,7 +2645,7 @@ function boot() {
   app.updateUndo();
   app.buildPanel();
   library = buildLibrary(app, {
-    openInEditor, removePhotos, deletePhotos, keepOnDevice, syncAnyway, syncOn: () => cloud.cloud.available, setRating, setFlag, setLabel, editKeywords, makeVirtualCopy, findSimilar, mergePhotos, cullPhotos: queueCull, denoisePhotos: (ids) => app.denoise({ ids, strength: denoiseStrength() }), syncSettings, exportPhotos,
+    openInEditor, removePhotos, deletePhotos, keepOnDevice, syncAnyway, syncOn: () => cloud.cloud.available, setRating, setFlag, setLabel, editKeywords, makeVirtualCopy, findSimilar, mergePhotos, cullPhotos: queueCull, comparePhotos: (ids) => openCompare(byIds(ids), { setFlag, loadBitmap: async (e) => { const f = await originalFile(e); if (!f) throw new Error('the original isn’t on this device'); return (await decodeFile(f)).bitmap; } }), denoisePhotos: (ids) => app.denoise({ ids, strength: denoiseStrength() }), syncSettings, exportPhotos,
     copyEdits: copyEditsFrom, pasteEdits: pasteEditsTo, resetEdits, photoMenu, presetMenu, pointAnchor, clipboard: batch.clipboard, describeClip: batch.describeClip,
     importFiles: () => openImporter(),
     syncFolder: (f) => (f ? syncFolder(f) : addSyncedFolder()),

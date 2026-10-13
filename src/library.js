@@ -234,6 +234,7 @@ export function buildLibrary(app, api) {
           n === 1 ? { label: 'Make a virtual copy (⌘ \')', icon: 'copy', onClick: () => api.makeVirtualCopy(ids()[0]) } : null,
           n === 1 ? { label: 'Find similar', icon: 'search', onClick: () => api.findSimilar(ids()[0]) } : null,
           { label: n > 1 ? `AI Denoise ${n} photos` : 'AI Denoise', icon: 'sparkle', onClick: () => { api.denoisePhotos(ids()); app.toast(`AI Denoise: ${n === 1 ? 'added' : `${n} photos added`} to background work`); } },
+          n > 1 && n <= 4 ? { label: 'Compare side by side (C)', icon: 'compare', onClick: () => api.comparePhotos(ids()) } : null,
           n > 1 ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => { api.cullPhotos(ids()); app.toast('Picking the best: added to background work'); } } : null,
           n > 1 ? { sep: true } : null,
           n > 1 ? { head: 'Merge' } : null,
@@ -579,6 +580,7 @@ export function buildLibrary(app, api) {
     if (k === 'Escape') { selected.clear(); refresh(); return true; }
     if (!selected.size) return false;
     if (/^[0-5]$/.test(k)) { api.setRating(ids(), +k); return true; }
+    if (k === 'c' && !ev.metaKey && !ev.ctrlKey && selected.size >= 2) { if (selected.size > 4) app.toast('Compare shows up to 4 photos: select 2 to 4'); else api.comparePhotos(ids()); return true; }
     if (k === 'p') { api.setFlag(ids(), 1); return true; }
     if (k === 'x') { api.setFlag(ids(), -1); return true; }
     if (k === 'u') { api.setFlag(ids(), 0); return true; }
