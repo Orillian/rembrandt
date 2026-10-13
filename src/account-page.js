@@ -10,7 +10,7 @@ import * as sb from './backend/supabase.js';
 import * as api from './backend/account-api.js';
 import { checkout, billingConfigured } from './backend/billing.js';
 import { backendConfigured, CONFIG } from './config.js';
-import { exportDefaults, saveExportDefaults } from './export.js';
+import { exportDefaults, saveExportDefaults, WATERMARK } from './export.js';
 import { prefs, savePrefs } from './account.js';
 import { getAppearance, setAppearance } from './theme.js';
 import { signInForm, openExternal } from './account-online.js';
@@ -336,7 +336,7 @@ export function buildAccountPage(app, hooks) {
     const rawQ = segmented([{ value: 0, label: 'Fast' }, { value: 3, label: 'Standard' }, { value: 4, label: 'Detailed' }], prefs.rawQuality, (v) => { prefs.rawQuality = v; savePrefs(); });
     const keys = segmented([{ value: 'rembrandt', label: 'Rembrandt' }, { value: 'lightroom', label: 'Lightroom' }], prefs.shortcuts || 'rembrandt', (v) => { prefs.shortcuts = v; savePrefs(); });
     const prevQ = segmented([{ value: 1920, label: 'Fast' }, { value: 2560, label: 'Balanced' }, { value: 4096, label: 'Sharp' }], prefs.previewLong, (v) => { prefs.previewLong = v; savePrefs(); hooks.previewChanged(v); });
-    const fmt = segmented([{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }], exportDefaults.format, (v) => { exportDefaults.format = v; saveExportDefaults(); });
+    const fmt = segmented([{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }, { value: 'tiff', label: 'TIFF' }], exportDefaults.format, (v) => { exportDefaults.format = v; saveExportDefaults(); });
     const q = slider({ label: 'Export quality', min: 40, max: 100, def: 92, get: () => exportDefaults.quality, set: (v) => { exportDefaults.quality = v; }, commit: saveExportDefaults });
     const perfSeg = segmented(Object.entries(MODES).map(([value, m]) => ({ value, label: m.label })), prefs.perf || 'balanced', (v) => { prefs.perf = v; savePrefs(); });
     const whenSeg = segmented([{ value: 'now', label: 'Right away' }, { value: 'away', label: 'When I’m away' }, { value: 'tonight', label: 'Tonight' }], prefs.aiWhen || 'now', (v) => { prefs.aiWhen = v; savePrefs(); });
@@ -345,6 +345,22 @@ export function buildAccountPage(app, hooks) {
         ...Array.from({ length: 24 }, (_, h) => el('option', { value: h, selected: (prefs[key] ?? def) === h }, `${h}:00`)));
       s.addEventListener('change', () => { prefs[key] = +s.value; savePrefs(); });
       return s;
+    };
+    // Watermark on exported photos: text (or your copyright / name), corner, size and opacity.
+    const watermarkFields = () => {
+      const wm = () => (prefs.watermark = { ...WATERMARK, ...prefs.watermark });
+      const set = (k, v) => { wm()[k] = v; savePrefs(); };
+      const text = el('input', { class: 'text-input', value: wm().text, placeholder: (prefs.copyright || prefs.artist || 'Your name').trim(), spellcheck: 'false' });
+      text.addEventListener('input', () => set('text', text.value));
+      text.addEventListener('keydown', (e) => e.stopPropagation());
+      const pos = segmented([['tl', 'Top left'], ['tr', 'Top right'], ['c', 'Centre'], ['bl', 'Bottom left'], ['br', 'Bottom right']].map(([value, label]) => ({ value, label })), wm().pos, (v) => set('pos', v), 'seg-sm');
+      return [
+        toggle('Add a watermark to exported photos', () => !!prefs.watermark?.on, (v) => set('on', v)).el,
+        field('Text', text, 'Empty uses your copyright, or your name.'),
+        field('Position', pos.el),
+        slider({ label: 'Size', min: 1, max: 10, step: 0.5, def: 3, get: () => wm().size, set: (v) => set('size', v) }).el,
+        slider({ label: 'Opacity', min: 10, max: 100, def: 70, get: () => wm().opacity, set: (v) => set('opacity', v) }).el,
+      ];
     };
     const textPref = (key, placeholder) => {
       const i = el('input', { class: 'text-input', value: prefs[key] || '', placeholder, spellcheck: 'false' });
@@ -386,6 +402,7 @@ export function buildAccountPage(app, hooks) {
         toggle('Include camera details (camera, lens, exposure, date taken)', () => prefs.exportExif !== false, (v) => { prefs.exportExif = v; savePrefs(); }).el,
         field('Your name', textPref('artist', 'Shown as the author of exported photos'), null),
         field('Copyright', textPref('copyright', '© 2026 Your Name'), 'Written into every exported photo. Location is never included.')),
+      card('Watermark', ...watermarkFields()),
     ];
   }
 

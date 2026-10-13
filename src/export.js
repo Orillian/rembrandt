@@ -4,14 +4,14 @@ import { canSave, countSave, askToUnlock, isUnlocked, freeSavesLeft } from './un
 import { el, clamp } from './util.js';
 import { segmented, slider, popMenu } from './ui.js';
 import { withRecipe, recipeOf } from './recipe.js';
-import { withMetadata } from './exif.js';
-import { prefs } from './account.js';
+import { withMetadata, srgbProfile } from './exif.js';
+import { prefs, savePrefs } from './account.js';
 import { beforeAfterPage } from './beforeafter.js';
 import { recordReplay, replaySupported } from './replay.js';
 import { icon } from './icons.js';
 import { DESTINATIONS, destination, deliver } from './export-dest.js';
 
-const FORMATS = { jpeg: ['image/jpeg', '.jpg'], png: ['image/png', '.png'], webp: ['image/webp', '.webp'] };
+const FORMATS = { jpeg: ['image/jpeg', '.jpg'], png: ['image/png', '.png'], webp: ['image/webp', '.webp'], tiff: ['image/tiff', '.tif'] };
 const SIZES = [
   { value: 0, label: 'Full' }, { value: 3840, label: '3840' }, { value: 2048, label: '2048' }, { value: 1080, label: '1080' },
 ];
@@ -24,7 +24,7 @@ export const exportDefaults = opts;
 export function saveExportDefaults() {
   try { localStorage.setItem(OPTS_KEY, JSON.stringify(opts)); } catch { /* ignore */ }
 }
-export const FORMAT_EXT = { jpeg: '.jpg', png: '.png', webp: '.webp' };
+export const FORMAT_EXT = { jpeg: '.jpg', png: '.png', webp: '.webp', tiff: '.tif' };
 
 const doneMessage = (d, n) => {
   const what = `${n} photo${n === 1 ? '' : 's'}`;
@@ -50,6 +50,57 @@ function resizeCanvas(src, w, h) {
   return out;
 }
 
+// Your name or copyright in a corner (Settings › Export › Watermark).
+export const WATERMARK = { on: false, text: '', pos: 'br', size: 3, opacity: 70 };
+export const watermarkText = () => (prefs.watermark?.text || prefs.copyright || prefs.artist || '').trim();
+export function drawWatermark(canvas, wm = { ...WATERMARK, ...prefs.watermark }) {
+  const text = watermarkText();
+  if (!wm.on || !text) return;
+  const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  const px = Math.max(10, Math.round(Math.min(W, H) * wm.size / 100)), pad = Math.round(px * 1.1);
+  ctx.save();
+  ctx.font = `600 ${px}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.globalAlpha = wm.opacity / 100;
+  ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = px * 0.25;
+  ctx.textBaseline = wm.pos[0] === 't' ? 'top' : wm.pos === 'c' ? 'middle' : 'bottom';
+  ctx.textAlign = wm.pos === 'c' ? 'center' : wm.pos[1] === 'l' ? 'left' : 'right';
+  const x = wm.pos === 'c' ? W / 2 : wm.pos[1] === 'l' ? pad : W - pad;
+  const y = wm.pos === 'c' ? H / 2 : wm.pos[0] === 't' ? pad : H - pad;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// Baseline RGB TIFF, 8 bits per channel, Deflate-compressed, with the sRGB profile, for handing a
+// photo to Photoshop or a print lab.
+export async function encodeTiff(canvas) {
+  const W = canvas.width, H = canvas.height;
+  const rgba = canvas.getContext('2d').getImageData(0, 0, W, H).data;
+  const rgb = new Uint8Array(W * H * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) { rgb[j] = rgba[i]; rgb[j + 1] = rgba[i + 1]; rgb[j + 2] = rgba[i + 2]; }
+  const data = new Uint8Array(await new Response(new Blob([rgb]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const icc = srgbProfile();
+  // Header, then the IFD (11 entries), then BitsPerSample, the profile and the pixels.
+  const n = 11, ifd = 8, bps = ifd + 2 + n * 12 + 4, iccAt = bps + 6, dataAt = iccAt + icc.length + (icc.length & 1);
+  const out = new Uint8Array(dataAt + data.length), dv = new DataView(out.buffer);
+  out.set([0x49, 0x49, 42, 0]); dv.setUint32(4, ifd, true);
+  dv.setUint16(ifd, n, true);
+  const tags = [
+    [256, 4, 1, W], [257, 4, 1, H], [258, 3, 3, bps], [259, 3, 1, 8], [262, 3, 1, 2], [273, 4, 1, dataAt],
+    [277, 3, 1, 3], [278, 4, 1, H], [279, 4, 1, data.length], [284, 3, 1, 1], [34675, 7, icc.length, iccAt],
+  ];
+  tags.forEach(([tag, type, count, v], k) => {
+    const o = ifd + 2 + k * 12;
+    dv.setUint16(o, tag, true); dv.setUint16(o + 2, type, true); dv.setUint32(o + 4, count, true);
+    if (type === 3 && count === 1) dv.setUint16(o + 8, v, true); else dv.setUint32(o + 8, v, true);
+  });
+  dv.setUint16(bps, 8, true); dv.setUint16(bps + 2, 8, true); dv.setUint16(bps + 4, 8, true);
+  out.set(icc, iccAt);
+  out.set(data, dataAt);
+  return new Blob([out], { type: 'image/tiff' });
+}
+
 // The edited photo at full resolution (`long`: at most this many pixels on its long edge), as ImageData.
 export async function renderPixels(app, { long = 0 } = {}, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
   const { crop } = p.geometry;
@@ -67,7 +118,9 @@ export async function renderExport(app, { format, quality, long, recipe, meta },
   let canvas = el('canvas', { width: image.width, height: image.height });
   canvas.getContext('2d').putImageData(image, 0, 0);
   if (image.width !== outW || image.height !== outH) canvas = resizeCanvas(canvas, outW, outH);
+  drawWatermark(canvas);
   const [mime] = FORMATS[format];
+  if (format === 'tiff') return { blob: await encodeTiff(canvas), w: canvas.width, h: canvas.height };
   let blob = await new Promise((r) => canvas.toBlob(r, mime, clamp(quality, 1, 100) / 100));
   if (!blob) throw new Error('The browser could not encode this format.');
   // Camera details, your name and copyright, and the sRGB profile (Settings › Export), then the recipe.
@@ -101,15 +154,15 @@ export function openExport(app, ids = null, renderPhoto = null) {
     }
     const special = opts.format === 'compare' || opts.format === 'replay';
     // A chip names a choice made in the ⋯ menu, so it's never hidden state.
-    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : ''].filter(Boolean).join(' · ');
+    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : ''].filter(Boolean).join(' · ');
     chip.hidden = !chip.textContent;
-    q.el.style.display = opts.format === 'png' || special ? 'none' : '';
+    q.el.style.display = opts.format === 'png' || opts.format === 'tiff' || special ? 'none' : '';
     size.el.closest('.field').style.display = opts.format === 'replay' ? 'none' : '';
     if (opts.format === 'compare') dims.textContent = 'A web page with the original and the edit, and a slider between them. Opens in any browser; nothing to upload.';
     if (opts.format === 'replay') dims.textContent = 'A short video of the photo developing, one step of the edit at a time, each named on screen. It plays as it records, so keep this window open.';
   }
   if ((batch || (opts.format === 'replay' && !replaySupported())) && !FORMAT_EXT[opts.format]) opts.format = 'jpeg';
-  const fmt = segmented([{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }], opts.format, (v) => { opts.format = v; update(); });
+  const fmt = segmented([{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }, { value: 'tiff', label: 'TIFF' }], opts.format, (v) => { opts.format = v; update(); });
   // Less common outputs and the recipe option sit behind one ⋯ so the dialog stays short.
   const SPECIAL = { compare: 'Before/after page', replay: 'Replay video' };
   const extras = el('button', { class: 'icon-btn sm', type: 'button', title: 'More formats and options', 'aria-label': 'More formats and options' }, icon('more'));
@@ -120,6 +173,10 @@ export function openExport(app, ids = null, renderPhoto = null) {
       { sep: true },
     ]),
     { label: 'Include how it was edited', checked: !!opts.recipe, onClick: () => { opts.recipe = !opts.recipe; update(); } },
+    { label: watermarkText() ? `Watermark “${watermarkText()}”` : 'Watermark (set it up in Settings)', checked: !!prefs.watermark?.on, onClick: () => {
+      if (!watermarkText()) { status.textContent = 'Add your name, copyright or a watermark text in Settings › Preferences › Export first.'; return; }
+      prefs.watermark = { ...WATERMARK, ...prefs.watermark, on: !prefs.watermark?.on }; savePrefs(); update();
+    } },
   ]));
   const chip = el('span', { class: 'export-chip' });
   const size = segmented(SIZES, SIZES.some((s) => s.value === opts.long) ? opts.long : -1, (v) => { opts.long = v; custom.value = ''; update(); });
