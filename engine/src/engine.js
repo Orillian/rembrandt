@@ -523,6 +523,18 @@ export class Engine {
     const gl = this.gl;
     const out = this.process(p, null);
     const lod = out.mip ? Math.max(0, Math.log2(this.L.h / v.scale)) : 0;
+    if (v.float) {
+      // 16-bit exports: the final pass into a float target, read back as floats (0–1, display-encoded).
+      const t = this.target(w, h, { fmt: gl.RGBA32F });
+      try {
+        this.draw(this.P.final, this.finalUniforms(p, out, { ...v, lod, clip: false, overlayId: null }), t);
+        const px = new Float32Array(w * h * 4);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, px);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return px;
+      } finally { this.free(t); }
+    }
     let t = this.small;
     const reuse = w * h <= 512 * 512;
     if (!reuse || !t || t.w !== w || t.h !== h) {
@@ -542,7 +554,7 @@ export class Engine {
   // Export render. `cropH` is the crop height in image-height units, `outH` the wanted pixel height.
   // Small outputs render from the mip-mapped preview level; larger ones from the full-resolution level
   // at native crop size (the caller downsizes if needed). Returns {pixels, w, h}.
-  async exportPixels(p, cropW, cropH, outH, mats) {
+  async exportPixels(p, cropW, cropH, outH, mats, { float = false } = {}) {
     const prevKind = this.L?.kind || 'preview';
     const kind = outH <= this.levelSize('preview').h * cropH ? 'preview' : 'full';
     await this.useLevel(kind);
@@ -554,7 +566,7 @@ export class Engine {
     // Host passes that spread their work over frames (Refocus) finish it in one go for an export.
     this.exporting = true;
     let px;
-    try { px = this.readPixels(p, w, h, { ...mats(w, h), scale: h / cropH, cropTest: true }); } finally { this.exporting = false; }
+    try { px = this.readPixels(p, w, h, { ...mats(w, h), scale: h / cropH, cropTest: true, float }); } finally { this.exporting = false; }
     if (prevKind !== kind) await this.useLevel(prevKind);
     return { pixels: px, w, h };
   }

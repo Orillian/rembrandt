@@ -72,14 +72,12 @@ export function drawWatermark(canvas, wm = { ...WATERMARK, ...prefs.watermark })
   ctx.restore();
 }
 
-// Baseline RGB TIFF, 8 bits per channel, Deflate-compressed, with the sRGB profile, for handing a
-// photo to Photoshop or a print lab.
-export async function encodeTiff(canvas) {
-  const W = canvas.width, H = canvas.height;
-  const rgba = canvas.getContext('2d').getImageData(0, 0, W, H).data;
-  const rgb = new Uint8Array(W * H * 3);
-  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) { rgb[j] = rgba[i]; rgb[j + 1] = rgba[i + 1]; rgb[j + 2] = rgba[i + 2]; }
-  const data = new Uint8Array(await new Response(new Blob([rgb]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+// Baseline RGB TIFF, Deflate-compressed, with the sRGB profile, for handing a photo to Photoshop or
+// a print lab. `rgb`: interleaved samples, Uint8Array (8-bit) or Uint16Array (16-bit).
+export async function encodeTiff(rgb, W, H) {
+  const bits = rgb.BYTES_PER_ELEMENT * 8;
+  const bytes = new Uint8Array(rgb.buffer, rgb.byteOffset, rgb.byteLength);   // little-endian, as the header says
+  const data = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
   const icc = srgbProfile();
   // Header, then the IFD (11 entries), then BitsPerSample, the profile and the pixels.
   const n = 11, ifd = 8, bps = ifd + 2 + n * 12 + 4, iccAt = bps + 6, dataAt = iccAt + icc.length + (icc.length & 1);
@@ -95,10 +93,55 @@ export async function encodeTiff(canvas) {
     dv.setUint16(o, tag, true); dv.setUint16(o + 2, type, true); dv.setUint32(o + 4, count, true);
     if (type === 3 && count === 1) dv.setUint16(o + 8, v, true); else dv.setUint32(o + 8, v, true);
   });
-  dv.setUint16(bps, 8, true); dv.setUint16(bps + 2, 8, true); dv.setUint16(bps + 4, 8, true);
+  for (let c = 0; c < 3; c++) dv.setUint16(bps + c * 2, bits, true);
   out.set(icc, iccAt);
   out.set(data, dataAt);
   return new Blob([out], { type: 'image/tiff' });
+}
+const canvasRGB = (canvas) => {
+  const rgba = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data, rgb = new Uint8Array(canvas.width * canvas.height * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) { rgb[j] = rgba[i]; rgb[j + 1] = rgba[i + 1]; rgb[j + 2] = rgba[i + 2]; }
+  return rgb;
+};
+
+// Area-average downscale of float RGBA (each output pixel averages the source pixels it covers).
+function shrinkFloat(src, w, h, W, H) {
+  const out = new Float32Array(W * H * 4), sx = w / W, sy = h / H;
+  for (let y = 0; y < H; y++) {
+    const y0 = Math.floor(y * sy), y1 = Math.max(y0 + 1, Math.floor((y + 1) * sy));
+    for (let x = 0; x < W; x++) {
+      const x0 = Math.floor(x * sx), x1 = Math.max(x0 + 1, Math.floor((x + 1) * sx));
+      let r = 0, g = 0, b = 0;
+      for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) { const i = (yy * w + xx) * 4; r += src[i]; g += src[i + 1]; b += src[i + 2]; }
+      const k = 1 / ((y1 - y0) * (x1 - x0)), o = (y * W + x) * 4;
+      out[o] = r * k; out[o + 1] = g * k; out[o + 2] = b * k; out[o + 3] = 1;
+    }
+  }
+  return out;
+}
+
+// 16-bit TIFF: the final pass read back as floats, so nothing is rounded to 8 bits on the way.
+async function renderTiff16(app, long, p, mats) {
+  const { crop } = p.geometry, E = app.engine;
+  const nativeW = Math.round(crop.w * E.fullH), nativeH = Math.round(crop.h * E.fullH);
+  const k = long ? Math.min(1, long / Math.max(nativeW, nativeH)) : 1;
+  const outW = Math.max(1, Math.round(nativeW * k)), outH = Math.max(1, Math.round(nativeH * k));
+  const res = await E.exportPixels(p, crop.w, crop.h, outH, (w, h) => mats(p, w, h), { float: true });
+  let px = res.pixels, w = res.w, h = res.h;
+  if (w !== outW || h !== outH) { px = shrinkFloat(px, w, h, outW, outH); w = outW; h = outH; }
+  // The watermark is drawn on a transparent layer and blended in.
+  const wm = el('canvas', { width: w, height: h });
+  drawWatermark(wm);
+  const a8 = prefs.watermark?.on && watermarkText() ? wm.getContext('2d').getImageData(0, 0, w, h).data : null;
+  const rgb = new Uint16Array(w * h * 3);
+  for (let i = 0, j = 0; j < rgb.length; i += 4, j += 3) {
+    for (let c = 0; c < 3; c++) {
+      let v = px[i + c];
+      if (a8 && a8[i + 3]) { const a = a8[i + 3] / 255; v = v * (1 - a) + (a8[i + c] / 255) * a; }
+      rgb[j + c] = Math.round(Math.min(1, Math.max(0, v)) * 65535);
+    }
+  }
+  return { blob: await encodeTiff(rgb, w, h), w, h };
 }
 
 // The edited photo at full resolution (`long`: at most this many pixels on its long edge), as ImageData.
@@ -113,14 +156,15 @@ export async function renderPixels(app, { long = 0 } = {}, p = app.params, mats 
 }
 
 // Renders `p` (default: the photo being edited) with the engine's current image.
-export async function renderExport(app, { format, quality, long, recipe, meta }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+export async function renderExport(app, { format, quality, long, recipe, meta, tiffBits }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+  if (format === 'tiff' && tiffBits !== 8) return renderTiff16(app, long, p, mats);
   const { image, outW, outH } = await renderPixels(app, { long }, p, mats);
   let canvas = el('canvas', { width: image.width, height: image.height });
   canvas.getContext('2d').putImageData(image, 0, 0);
   if (image.width !== outW || image.height !== outH) canvas = resizeCanvas(canvas, outW, outH);
   drawWatermark(canvas);
   const [mime] = FORMATS[format];
-  if (format === 'tiff') return { blob: await encodeTiff(canvas), w: canvas.width, h: canvas.height };
+  if (format === 'tiff') return { blob: await encodeTiff(canvasRGB(canvas), canvas.width, canvas.height), w: canvas.width, h: canvas.height };
   let blob = await new Promise((r) => canvas.toBlob(r, mime, clamp(quality, 1, 100) / 100));
   if (!blob) throw new Error('The browser could not encode this format.');
   // Camera details, your name and copyright, and the sRGB profile (Settings › Export), then the recipe.
@@ -154,7 +198,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
     }
     const special = opts.format === 'compare' || opts.format === 'replay';
     // A chip names a choice made in the ⋯ menu, so it's never hidden state.
-    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : ''].filter(Boolean).join(' · ');
+    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : '', opts.format === 'tiff' ? `${opts.tiffBits === 8 ? 8 : 16}-bit` : ''].filter(Boolean).join(' · ');
     chip.hidden = !chip.textContent;
     q.el.style.display = opts.format === 'png' || opts.format === 'tiff' || special ? 'none' : '';
     size.el.closest('.field').style.display = opts.format === 'replay' ? 'none' : '';
@@ -172,6 +216,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
       replaySupported() ? { label: 'Replay video', checked: opts.format === 'replay', onClick: () => { opts.format = 'replay'; fmt.set(null); update(); } } : null,
       { sep: true },
     ]),
+    opts.format === 'tiff' ? { label: '16 bits per channel', checked: opts.tiffBits !== 8, onClick: () => { opts.tiffBits = opts.tiffBits === 8 ? 16 : 8; update(); } } : null,
     { label: 'Include how it was edited', checked: !!opts.recipe, onClick: () => { opts.recipe = !opts.recipe; update(); } },
     { label: watermarkText() ? `Watermark “${watermarkText()}”` : 'Watermark (set it up in Settings)', checked: !!prefs.watermark?.on, onClick: () => {
       if (!watermarkText()) { status.textContent = 'Add your name, copyright or a watermark text in Settings › Preferences › Export first.'; return; }
