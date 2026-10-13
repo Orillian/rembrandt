@@ -172,6 +172,7 @@ uniform sampler2D uIn;
 uniform sampler2D uLut;
 uniform vec2 uSize;
 uniform float uFill;
+uniform mat3 uPersp;   // perspective on centred coordinates in half-heights (identity when unused)
 in vec2 vUv; out vec4 o;
 vec4 lut(float r) {
   float x = clamp(r, 0.0, 1.0) * 32.0;
@@ -182,6 +183,8 @@ vec4 lut(float r) {
 void main() {
   float hd = 0.5 * length(uSize);
   vec2 d = (vUv - 0.5) * uSize * uFill;
+  vec3 h = uPersp * vec3(d / (0.5 * uSize.y), 1.0);
+  d = h.xy / h.z * (0.5 * uSize.y);
   vec4 k = lut(length(d) / hd);
   vec2 dg = d * k.g;
   vec2 uvG = 0.5 + dg / uSize;

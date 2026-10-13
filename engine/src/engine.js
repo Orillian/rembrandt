@@ -333,7 +333,7 @@ export class Engine {
   // Lens corrections, then source passes, into L.base. Returns a key that changes with the result.
   baseStage(p) {
     const L = this.L, gl = this.gl;
-    const lens = opticsLut(p.optics, this.lensProfile);
+    const lens = opticsLut(p.optics, this.lensProfile, L.w / L.h);
     const sk = this.sourcePasses ? this.sourcePasses.key(p) : '';
     const key = `${lens ? lens.key : '-'}|${sk}|${L.w}x${L.h}|${this.token}`;
     if (L.baseKey === key) return key;
@@ -349,7 +349,7 @@ export class Engine {
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 33, 1, gl.RGBA, gl.FLOAT, lens.data);
       cur = this.tgt('lens', gl.RGBA16F, true);
-      this.draw(this.P.lens, { uIn: L.src, uLut: this.lutTex, uSize: [L.w, L.h], uFill: lens.fill }, cur);
+      this.draw(this.P.lens, { uIn: L.src, uLut: this.lutTex, uSize: [L.w, L.h], uFill: lens.fill, uPersp: lens.persp }, cur);
     }
     if (this.sourcePasses && sk) {
       // Source passes work on a float copy they may change in place.

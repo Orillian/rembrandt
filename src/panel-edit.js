@@ -1,6 +1,7 @@
 // The main "Edit" panel: light, color, effects, curve, mixer, grading, detail.
 import { el, getPath, setPath } from './util.js';
 import { slider, section, segmented, iconButton, button, popMenu, toggle } from './ui.js';
+import { autoVertical } from './tool-crop.js';
 import { curveEditor, hslMixer, gradingControl } from './widgets.js';
 import { defaultParams } from './params.js';
 
@@ -155,6 +156,14 @@ export function buildEditPanel(app) {
     S('optics.manualDistortion', 'Distortion', -100, 100),
     S('optics.manualVignette', 'Vignetting', -100, 100),
     S('optics.manualMidpoint', 'Midpoint', 0, 100),
+    el('div', { class: 'subhead' }, el('span', {}, 'Transform'), button('Auto', () => {
+      const v = autoVertical(app);
+      if (v == null) { app.toast('No clear vertical lines to straighten in this photo'); return; }
+      app.set('optics.vertical', v); app.commit(); app.refreshPanel();
+      app.toast(`Vertical ${v > 0 ? '+' : ''}${v}: converging verticals made parallel`);
+    }, 'sm ghost')),
+    S('optics.vertical', 'Vertical', -100, 100),
+    S('optics.horizontal', 'Horizontal', -100, 100),
   );
 
   const root = el('div', { class: 'panel-view' }, tools, light.el, color.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);

@@ -193,7 +193,10 @@ export function radialEval(f, r) {
 // o: p.optics = { profile: 'auto' | true | false, distortion, vignetting, ca, manualDistortion, manualVignette, manualMidpoint }
 // profile: the camera's built-in correction { vignetting, distortion, chromatic: [red, blue] } or null.
 // Returns { data: Float32Array(33 * 4), fill, key }.
-export function opticsLut(o, profile) {
+// Full Vertical / Horizontal (±100): how strong the keystone is, in the homography's units.
+export const PERSP = 0.5;
+
+export function opticsLut(o, profile, aspect = 1.5) {
   if (!o) return null;
   const use = !!(profile && (o.profile === true || (o.profile === 'auto' && profile.defaultOn)));
   const dAmt = (o.distortion ?? 100) / 100, vAmt = (o.vignetting ?? 100) / 100;
@@ -201,7 +204,11 @@ export function opticsLut(o, profile) {
   const mid = Math.min(0.9, Math.max(0, (o.manualMidpoint ?? 50) / 100 * 0.8));
   const prof = use ? profile : {};
   const ca = use && o.ca !== false && prof.chromatic;
-  if (!(use && (prof.distortion || prof.vignetting || ca)) && !md && !mv) return null;
+  // Perspective (Transform › Vertical / Horizontal): keystone as a homography on centred coordinates
+  // in half-heights, applied before the lens correction. Positive Vertical straightens verticals that
+  // lean in towards the top (camera tilted up).
+  const kv = -(o.vertical || 0) / 100 * PERSP, kh = -(o.horizontal || 0) / 100 * PERSP;
+  if (!(use && (prof.distortion || prof.vignetting || ca)) && !md && !mv && !kv && !kh) return null;
   const data = new Float32Array(33 * 4);
   let widest = 1;
   for (let i = 0; i <= 32; i++) {
@@ -220,6 +227,21 @@ export function opticsLut(o, profile) {
   }
   // Fill: scale the output so every corrected corner samples inside the photo (Lightroom crops the
   // empty border the same way).
-  const fill = 1 / widest;
-  return { data, fill, key: `${use ? 1 : 0}|${dAmt}|${vAmt}|${ca ? 1 : 0}|${md}|${mv}|${mid}` };
+  let fill = 1 / widest;
+  const persp = [1, 0, kh, 0, 1, kv, 0, 0, 1];   // GLSL mat3, column by column: w = kh·x + kv·y + 1
+  if (kv || kh) {
+    // The largest fill whose frame corners and edge midpoints, through the perspective and the lens
+    // correction, still sample inside the photo.
+    const reach = (r) => { const i = Math.min(32, Math.max(0, r * 32)), j = Math.floor(i), k = Math.min(32, j + 1), t = i - j; const at = (n, c) => data[n * 4 + c]; const g = at(j, 1) * (1 - t) + at(k, 1) * t; return g * Math.max(1, at(j, 2), at(j, 3)); };
+    const ok = (f) => [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]].every(([cx, cy]) => {
+      const x = cx * aspect * f, y = cy * f, w = kh * x + kv * y + 1;
+      if (w <= 0.05) return false;
+      const sx = x / w, sy = y / w, g = reach(Math.hypot(sx, sy) / Math.hypot(aspect, 1));
+      return Math.abs(sx * g) <= aspect + 1e-6 && Math.abs(sy * g) <= 1 + 1e-6;
+    });
+    let lo = 0.2, hi = 1;
+    for (let n = 0; n < 30; n++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
+    fill = lo;
+  }
+  return { data, fill, persp, key: `${use ? 1 : 0}|${dAmt}|${vAmt}|${ca ? 1 : 0}|${md}|${mv}|${mid}|${kv}|${kh}|${aspect.toFixed(4)}` };
 }

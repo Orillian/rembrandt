@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { A, maxCrop, fitCrop, constrainCrop, cropValid } from './geometry.js';
 import { aspectRatioOf } from './params.js';
 import { detectTilt } from './straighten.js';
+import { PERSP } from '../engine/src/pipeline.js';
 
 // The tilt of the photo as framed now, measured with no straightening applied. null: no clear lines.
 export function measureTilt(app) {
@@ -14,6 +15,22 @@ export function measureTilt(app) {
   geo.crop = maxCrop(app.img.aspect, geo, aspectRatioOf(geo, app.img.aspect), 0, 0);
   const img = app.renderSmall({ ...app.params, geometry: geo }, 800);
   return img ? detectTilt(img) : null;
+}
+
+// Auto Vertical (Transform): makes converging verticals parallel. Measured on the photo without any
+// Vertical correction; a line X half-heights from the centre leans by about X·k for keystone k, so
+// the lean's slope across the frame gives k, and k the slider value. Returns the value or null.
+export function autoVertical(app) {
+  if (!app.img) return null;
+  const G = app.params.geometry;
+  const geo = { ...G, angle: 0, aspect: 'original', cropAuto: true };
+  geo.crop = maxCrop(app.img.aspect, geo, aspectRatioOf(geo, app.img.aspect), 0, 0);
+  const img = app.renderSmall({ ...app.params, optics: { ...app.params.optics, vertical: 0 }, geometry: geo }, 800);
+  const t = img && detectTilt(img);
+  if (!t || t.keystone == null || Math.abs(t.keystone) < 0.3) return null;
+  const aspect = img.width / img.height;
+  const k = (t.keystone * Math.PI) / 180 / (2 * aspect);   // radians of lean per half-height across
+  return clamp(Math.round((-k / PERSP) * 100), -100, 100);
 }
 
 // Levels the photo: sets Straighten from the detected tilt and refits the crop. Returns the result.

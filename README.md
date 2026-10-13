@@ -92,9 +92,11 @@ checks it against the published SHA-256 sums, and restarts the server.
   blemishes** finds and heals them on portraits in one click and keeps moles and beauty marks.
 - **Pick the best**: select a shoot and Rembrandt groups the bursts, picks the sharpest frame with
   open eyes in each and rejects the blurry and eyes-closed ones. Your own flags are kept; one Undo.
+  **Compare** (C) shows 2–4 frames side by side with zoom and pan linked.
 - **Lens corrections**: the camera's built-in profile from Fujifilm and Sony RAWs, or one of 1,500
   lens profiles from [Lensfun](https://lensfun.github.io) (distortion, vignetting, chromatic
-  aberration), plus manual distortion and vignetting for any photo. Auto straighten levels horizons.
+  aberration), plus manual distortion and vignetting for any photo. Auto straighten levels horizons;
+  Transform's Vertical and Horizontal fix converging lines, and Auto makes a building's verticals parallel.
 - **On-device AI**: Refocus, background replacement. Nothing is uploaded.
 - **Library**: albums, ratings, flags, colour labels, keywords, virtual copies, search, Find similar,
   sorting, keyboard shortcuts (or Lightroom's), one-click delete with Undo.
@@ -141,7 +143,7 @@ checks it against the published SHA-256 sums, and restarts the server.
   darktable has far more modules and control; Rembrandt aims to be usable in five minutes, with fewer,
   broader controls and on-device AI. The engine is an independent implementation (see Credits).
 - **LightCraft**: a newer open-source Lightroom reimplementation in Rust, from the ArtCraft team, with
-  more of Lightroom's library and export surface (stacks, Survey view, Upright, AVIF and HDR export)
+  more of Lightroom's library and export surface (stacks, Survey view, all of Upright's modes, AVIF and HDR export)
   and an MCP server for AI agents. By [its own status table](https://github.com/storytold/lightcraft#feature-status),
   its AI masks and denoise are still classical heuristics or in progress and Super Resolution isn't
   started; some CR3, Olympus and Nikon HE RAWs don't decode yet. Rembrandt's on-device AI (People and

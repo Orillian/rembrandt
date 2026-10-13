@@ -96,11 +96,14 @@ export function detectTilt(img) {
       const slope = use.length >= 3 && vp > 0.01 ? use.reduce((s2, l) => s2 + l.votes * (l.pos - mp) * (l.tilt - mt), 0) / W / vp : 0;
       const at = (l) => mt + slope * (l.pos - mp);
       const keep = use.filter((l) => Math.abs(l.tilt - at(l)) <= 1.5);
-      if (pass === 1 || keep.length < 2 || keep.length === use.length) return { tilt: mt - slope * mp, votes: use.reduce((s2, l) => s2 + l.votes, 0), lines: use.length };
+      if (pass === 1 || keep.length < 2 || keep.length === use.length) return { tilt: mt - slope * mp, slope, votes: use.reduce((s2, l) => s2 + l.votes, 0), lines: use.length, band: use[0].band };
       use = keep;
     }
   };
   const bands = [0, 1].map((band) => best.filter((l) => l.band === band)).filter((l) => l.length).map(fit);
+  // Converging verticals (keystone): how their tilt changes across the frame, degrees per frame width.
+  const vb = bands.find((b) => b.band === 1 && b.lines >= 2);
+  const keystone = vb ? vb.slope : null;
   // Bands that agree are averaged; otherwise the stronger one wins.
   bands.sort((x, y) => y.votes - x.votes);
   let res = bands[0];
@@ -111,5 +114,5 @@ export function detectTilt(img) {
   const all = best.reduce((s2, l) => s2 + l.votes, 0);
   const confidence = Math.min(1, (res.votes / all) * Math.min(1, res.votes / (Math.max(w, h) * 0.8)));
   if (confidence < 0.25 || Math.abs(res.tilt) > RANGE - 1) return null;
-  return { angle: -Math.round(res.tilt * 10) / 10, confidence, lines: res.lines };
+  return { angle: -Math.round(res.tilt * 10) / 10, confidence, lines: res.lines, keystone };
 }
