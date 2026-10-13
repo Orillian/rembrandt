@@ -140,6 +140,13 @@ checks it against the published SHA-256 sums, and restarts the server.
   on linear light before a tone curve maps it to the screen), which is why highlights recover cleanly.
   darktable has far more modules and control; Rembrandt aims to be usable in five minutes, with fewer,
   broader controls and on-device AI. The engine is an independent implementation (see Credits).
+- **LightCraft**: a newer open-source Lightroom reimplementation in Rust, from the ArtCraft team, with
+  more of Lightroom's library and export surface (stacks, Survey view, Upright, AVIF and HDR export)
+  and an MCP server for AI agents. By [its own status table](https://github.com/storytold/lightcraft#feature-status),
+  its AI masks and denoise are still classical heuristics or in progress and Super Resolution isn't
+  started; some CR3, Olympus and Nikon HE RAWs don't decode yet. Rembrandt's on-device AI (People and
+  subject masks, AI Denoise, Super Resolution, Refocus, blemish removal, culling by focus and eyes)
+  and LibRaw's 1,000+ cameras are where it differs most.
 - **RawTherapee / ART**: similar ground to darktable; Rembrandt trades depth of control for speed of use.
 - **GIMP / Photoshop**: different kind of tool. Those are pixel editors for compositing and painting;
   Rembrandt is a non-destructive RAW developer and library, like Lightroom.
