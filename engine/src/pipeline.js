@@ -82,6 +82,8 @@ export function finalUniforms(p, fullW, fullH, workH, sceneSource) {
     uGrain: [p.grain.amount / 100, (0.5 + (p.grain.size / 100) * 3.5) * Math.max(1, fullH / 4000), p.grain.roughness / 100],
     uFullSize: [fullW, fullH],
     uCropAspect: p.geometry ? p.geometry.crop.w / p.geometry.crop.h : fullW / fullH,
+    // The learned camera look (Match my camera), RAWs only; `_camLook` is set by the app.
+    ...(sceneSource && p._camLook ? { uCamOn: 1, uCamL: p._camLook.L, uCamGain: p._camLook.gain, uCamShift: p._camLook.shift } : { uCamOn: 0 }),
   };
 }
 

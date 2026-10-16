@@ -34,6 +34,7 @@ import { buildLibrary } from './library.js';
 import { ring, fmtBytes } from './ring.js';
 import { openShare } from './share.js';
 import { paintAvatar, prefs, savePrefs } from './account.js';
+import { cameraKey, learnCamera } from './camera-match.js';
 import { buildAccountPage } from './account-page.js';
 import { listOnlineOriginals } from './backend/account-api.js';
 import * as cloud from './cloud.js';
@@ -479,7 +480,7 @@ const app = {
 
   renderNow() {
     const E = this.engine;
-    if (!this.img || !E?.L) return;
+    if (!this.img || !E?.L || this._borrowed) return;
     const d = DPR();
     const cw = Math.max(1, Math.round(viewer.clientWidth * d)), ch = Math.max(1, Math.round(viewer.clientHeight * d));
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
@@ -850,6 +851,7 @@ async function editedThumb(bitmap, params, aspect) {
   try {
     engineDirty = true;
     await app.engine.setImage({ kind: 'display', bitmap }, computeStats(sampleData(bitmap)));
+    app.engine.camKey = null;
     const { crop } = params.geometry;
     const ar = crop.w / crop.h, long = 360;
     const w = Math.max(1, Math.round(ar >= 1 ? long : long * ar)), h = Math.max(1, Math.round(ar >= 1 ? long / ar : long));
@@ -1282,6 +1284,54 @@ async function originalFile(e) {
   return e.file || (await catalog.getFile(e.id)) || (e.src ? await folders.fileFor(e.src) : null);
 }
 
+// Match my camera: learn the camera's colour from up to 12 of its RAWs in the library (the photo
+// being edited first), keep it in prefs per camera, and turn it on for this photo.
+const CAM_PHOTOS = 12;
+app.cameraMatch = {
+  key: () => app.engine?.camKey || null,
+  info: () => prefs.cameraLooks?.[app.engine?.camKey] || null,
+  busy: false,
+  async learn() {
+    const key = app.engine?.camKey, cur = app.images[app.cur];
+    if (!key || this.busy) return;
+    this.busy = true; app.refreshPanel();
+    try {
+      const same = app.images.filter((e) => e !== cur && e.raw && cameraKey(e.meta) === key);
+      const unknown = app.images.filter((e) => e !== cur && e.raw && !e.meta);
+      const files = [];
+      for (const e of [cur, ...same, ...unknown]) {
+        if (files.length >= CAM_PHOTOS) break;
+        const f = await originalFile(e).catch(() => null);
+        if (f) files.push(f);
+      }
+      app.toast(`Learning your ${key}’s color from ${files.length} photo${files.length === 1 ? '' : 's'}…`);
+      // Each RAW rendered with default settings on the editor's engine (borrowed: the viewer
+      // holds still), exactly as the editor would show it.
+      app._borrowed = true;
+      const render = async (file) => {
+        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1 });
+        if (cameraKey(lin.meta) !== key) return null;
+        engineDirty = true;
+        await app.engine.setImage({ kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain }, computeStats({ data: lin.preview.data, w: lin.preview.w, h: lin.preview.h }));
+        app.engine.camKey = null;
+        app.engine.setLensProfile((await readLensProfile(file).catch(() => null)) || (lin.meta?.lens ? await lensfunProfile(lin.meta).catch(() => null) : null));
+        const aspect = lin.w / lin.h, p = defaultParams(aspect), w = 640, h = Math.round(w / aspect);
+        return { data: app.engine.readPixels(p, w, h, { ...outputMatsFor(p, aspect, w, h), scale: h / p.geometry.crop.h, cropTest: true }), w, h };
+      };
+      const r = await learnCamera(files, { render, decodeFile });
+      if (!r) { app.toast('Not enough to learn from: these RAWs have no full-size camera JPEG inside'); return; }
+      prefs.cameraLooks = { ...prefs.cameraLooks, [key]: { ...r, at: Date.now() } };
+      savePrefs();
+      app.set('cameraLook', true); app.commit();
+      const gain = Math.round((1 - r.err[1] / r.err[0]) * 100);
+      app.toast(`Learned from ${r.photos} photo${r.photos === 1 ? '' : 's'}${gain > 0 ? `: ${gain}% closer to the camera’s JPEGs` : ': Rembrandt already matches this camera closely'}`);
+    } finally {
+      if (app._borrowed) { app._borrowed = false; const e = app.images[app.cur]; if (engineDirty && e && app.img) await applySource(e); engineDirty = false; }
+      this.busy = false; app.refreshPanel(); app.requestRender();
+    }
+  },
+};
+
 function releaseBitmap(e) {
   if (app.images[app.cur] === e) return;
   if (e.bitmap) { e.bitmap.close?.(); e.bitmap = null; }
@@ -1332,6 +1382,8 @@ async function applySource(e) {
   }
   if (app.img) app.img.aspect = aspect;
   await app.engine.setImage(lin ? { kind: 'linear', data: lin.data, w, h, gain: lin.gain } : { kind: 'display', bitmap: e.bitmap }, e.stats);
+  const camKey = lin ? cameraKey(lin.meta || e.meta) : null;
+  if (camKey !== app.engine.camKey) { app.engine.camKey = camKey; app.refreshPanel?.(); }
   app.engine.setLensProfile(e.lensProfile);
   // Built-in lens corrections are read once per photo, straight from the RAW file.
   if (e.raw && e.lensProfile === undefined) {
@@ -2070,11 +2122,17 @@ let engineDirty = false;
 
 // The engine renders effective settings (switched-off groups use their defaults).
 let canvasBg = [0.08, 0.08, 0.09];
+// `camKey`: the camera of the photo on the engine; its learned look (Match my camera) is applied
+// when the photo has it on.
+const withCam = (eng, p) => {
+  const look = p?.cameraLook && eng.camKey && prefs.cameraLooks?.[eng.camKey]?.look;
+  return look ? { ...p, _camLook: look } : p;
+};
 class AppEngine extends Engine {
-  render(p, v) { return super.render(effectiveParams(p), { bg: canvasBg, ...v }); }
+  render(p, v) { return super.render(withCam(this, effectiveParams(p)), { bg: canvasBg, ...v }); }
   renderBefore(p, v) { return super.renderBefore(effectiveParams(p), { bg: canvasBg, ...v }); }
-  readPixels(p, w, h, v) { return super.readPixels(effectiveParams(p), w, h, v); }
-  exportPixels(p, ...rest) { return super.exportPixels(effectiveParams(p), ...rest); }
+  readPixels(p, w, h, v) { return super.readPixels(withCam(this, effectiveParams(p)), w, h, v); }
+  exportPixels(p, ...rest) { return super.exportPixels(withCam(this, effectiveParams(p)), ...rest); }
 }
 async function renderPhotoForExport(id, opts) {
   const e = app.images.find((x) => x.id === id);
@@ -2098,6 +2156,7 @@ async function renderPhotoForExport(id, opts) {
   const params = e.params && e.params.v === 1 ? deepMerge(defaultParams(aspect), e.params) : defaultParams(aspect);
   engineDirty = true;
   await app.engine.setImage(lin ? { kind: 'linear', data: lin.data, w, h, gain: lin.gain } : { kind: 'display', bitmap: d.bitmap }, computeStats(sample));
+  app.engine.camKey = lin ? cameraKey(lin.meta || e.meta) : null;
   if (d.raw && e.lensProfile === undefined) e.lensProfile = await readLensProfile(file);
   if (d.raw && !e.lensProfile && lin?.meta?.lens) e.lensProfile = await lensfunProfile(lin.meta).catch(() => null);
   app.engine.setLensProfile(e.lensProfile);

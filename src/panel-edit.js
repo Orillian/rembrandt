@@ -88,6 +88,28 @@ export function buildEditPanel(app) {
     S('vibrance', 'Vibrance', -100, 100),
     S('saturation', 'Saturation', -100, 100),
   );
+  // Match my camera (RAWs): the camera's own colour, learned from the JPEGs inside its RAW files.
+  const cm = app.cameraMatch;
+  const camToggle = toggle('Match my camera', () => app.params.cameraLook && cm?.info(), (v) => {
+    if (v && !cm.info()) { cm.learn(); return; }
+    app.set('cameraLook', v); app.commit();
+  });
+  const camNote = el('p', { class: 'hint' });
+  const camBtn = button('Learn', () => cm.learn(), 'sm');
+  const camBox = el('div', { class: 'cam-match' }, el('div', { class: 'divider' }),
+    el('div', { class: 'subhead' }, el('span', {}, 'Camera color'), camBtn), camToggle.el, camNote);
+  color.body.append(camBox);
+  reg.push({ refresh: () => {
+    const key = cm?.key(), info = cm?.info();
+    camBox.hidden = !key;
+    if (!key) return;
+    camToggle.refresh();
+    camBtn.lastChild.textContent = cm.busy ? 'Learning…' : info ? 'Relearn' : 'Learn';
+    camBtn.disabled = cm.busy;
+    camNote.textContent = info
+      ? `Your ${key}’s look, learned from ${info.photos} photo${info.photos === 1 ? '' : 's'} (ΔE ${info.err[0]} → ${info.err[1]} on held-out pixels).`
+      : `Learns how your ${key} renders color from the JPEGs inside its RAW files. On this device.`;
+  } });
 
   // --- effects
   const fx = sec('Effects', 'effects', { id: 'effects', open: false, onReset: resetPaths(['texture', 'clarity', 'dehaze', 'haze', 'vignette', 'grain']) });

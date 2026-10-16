@@ -38,6 +38,8 @@ export function defaultParams(aspect = 1.5) {
     optics: { profile: 'auto', distortion: 100, vignetting: 100, ca: true, manualDistortion: 0, manualVignette: 0, manualMidpoint: 50, vertical: 0, horizontal: 0 },
     // Spot removal (Heal / Clone), applied to the source in order; see src/retouch.js.
     retouch: [],
+    // Match my camera: the camera's own colour, learned from its JPEGs (src/camera-match.js). RAWs only.
+    cameraLook: false,
     ai: {
       refocus: { amount: 0, radius: -1, scope: 'subject', protect: 30 },
       blur: { amount: 0, focus: -1, range: 12, bokeh: 0, protect: true, sharpen: 0, blades: 0, catseye: 0 },

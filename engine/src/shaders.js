@@ -399,9 +399,27 @@ uniform float uLod, uSharpMask, uCropAspect, uTC, uTK;
 uniform vec2 uSharp, uNR;
 uniform vec4 uVig;
 uniform vec3 uGrain;
+uniform int uCamOn;
+uniform float uCamL[17], uCamGain[8], uCamShift[8];
 in vec2 vUv; out vec4 o;
 
 vec3 at(vec2 uv) { return textureLod(uIn, uv, uLod).rgb; }
+
+// The learned camera look (src/camera-match.js applyLook): a lightness curve, then saturation and
+// hue per Oklab hue band, linear between band centres. On display-linear Rec.2020.
+vec3 cameraLook(vec3 disp) {
+  vec3 lab = oklab(max(disp, 0.0));
+  float x = clamp(lab.x, 0.0, 1.0) * 16.0;
+  int j = min(15, int(floor(x)));
+  float L = mix(uCamL[j], uCamL[j + 1], x - float(j));
+  float C = length(lab.yz);
+  if (C < 1e-6) return unOklab(vec3(L, lab.yz));
+  float h = atan(lab.z, lab.y);
+  float t = (h + PI) / (2.0 * PI / 8.0) - 0.5, k0 = floor(t), f = t - k0;
+  int i0 = int(mod(k0 + 8.0, 8.0)), i1 = (i0 + 1) % 8;
+  float g = mix(uCamGain[i0], uCamGain[i1], f), sh = mix(uCamShift[i0], uCamShift[i1], f);
+  return unOklab(vec3(L, C * g * cos(h + sh), C * g * sin(h + sh)));
+}
 
 float hash(vec2 p) {
   uvec2 q = uvec2(ivec2(floor(p)) + ivec2(40000));
@@ -509,6 +527,7 @@ void main() {
   }
 
   vec3 disp = displayTransform(rgb);              // display-linear Rec.2020
+  if (uCamOn == 1) disp = cameraLook(disp);
   vec3 lin = gamutMap(TO_SRGB * disp, uPathToWhite == 1);
   vec3 s = encode(lin);
 
