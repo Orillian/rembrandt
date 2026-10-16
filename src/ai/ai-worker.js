@@ -17,6 +17,14 @@ importScripts('../vendor/mediapipe/vision_bundle.js');
 const BASE = new URL('../', self.location.href).href;
 const MODELS = new URL('../../models/', self.location.href).href;
 let fileset = null;
+// Each MediaPipe task gets its own WebGL canvas. MediaPipe only makes one itself when the browser
+// says it's Chrome, or Safari 17+ by version number; the Linux app's WebKitGTK says neither, and
+// MediaPipe then fails on its first GL call ("GLctx.activeTexture", issue #21).
+function glCanvas() {
+  const c = new OffscreenCanvas(1, 1);
+  if (!c.getContext('webgl2')) throw new Error('AI needs WebGL 2 in a worker, which this browser or graphics driver doesn’t provide');
+  return c;
+}
 const tasks = {};
 
 async function files() {
@@ -49,7 +57,7 @@ async function faceLandmarker() {
       buf = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
     }
-    return Vision.FaceLandmarker.createFromOptions(fs, { baseOptions: { modelAssetBuffer: buf, delegate: 'CPU' }, runningMode: 'IMAGE', numFaces: 8, minFaceDetectionConfidence: 0.4 });
+    return Vision.FaceLandmarker.createFromOptions(fs, { canvas: glCanvas(), baseOptions: { modelAssetBuffer: buf, delegate: 'CPU' }, runningMode: 'IMAGE', numFaces: 8, minFaceDetectionConfidence: 0.4 });
   })());
 }
 
@@ -58,8 +66,8 @@ async function segmenter(name) {
     tasks[name] = (async () => {
       const fs = await files();
       const base = { modelAssetBuffer: await loadModel(name), delegate: 'CPU' };
-      if (name === 'object') return Vision.InteractiveSegmenterLegacy.createFromOptions(fs, { baseOptions: base, outputConfidenceMasks: true, outputCategoryMask: false });
-      return Vision.ImageSegmenter.createFromOptions(fs, { baseOptions: base, outputConfidenceMasks: true, outputCategoryMask: false, runningMode: 'IMAGE' });
+      if (name === 'object') return Vision.InteractiveSegmenterLegacy.createFromOptions(fs, { canvas: glCanvas(), baseOptions: base, outputConfidenceMasks: true, outputCategoryMask: false });
+      return Vision.ImageSegmenter.createFromOptions(fs, { canvas: glCanvas(), baseOptions: base, outputConfidenceMasks: true, outputCategoryMask: false, runningMode: 'IMAGE' });
     })();
   }
   return tasks[name];
