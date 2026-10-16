@@ -35,6 +35,7 @@ import { ring, fmtBytes } from './ring.js';
 import { openShare } from './share.js';
 import { paintAvatar, prefs, savePrefs } from './account.js';
 import { cameraKey, learnCamera } from './camera-match.js';
+import { measure as measureLook, matchTo } from './consistent.js';
 import { buildAccountPage } from './account-page.js';
 import { listOnlineOriginals } from './backend/account-api.js';
 import * as cloud from './cloud.js';
@@ -1823,6 +1824,7 @@ function photoMenu(ids, anchor, extra = []) {
     { label: n > 1 ? `Reset edits on ${n} photos` : 'Reset edits', icon: 'reset', onClick: () => resetEdits(ids) },
     n === 1 ? { label: 'Find similar', icon: 'search', onClick: () => findSimilar(ids[0]) } : null,
     n > 1 ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => queueCull(ids) } : null,
+    n > 1 ? (() => { const hero = heroOf(ids); return { label: `Make consistent with “${hero.name}”`, icon: 'sliders', onClick: () => queueConsistent(ids, hero.id) }; })() : null,
     ...extra,
   ]);
 }
@@ -1831,6 +1833,74 @@ function presetMenu(ids, anchor) {
   for (const p of allPresets()) (groups[p.group || 'Your presets'] ||= []).push(p);
   popMenu(anchor, Object.entries(groups).flatMap(([g, list], i) => [i ? { sep: true } : null, { head: g }, ...list.map((p) => ({ label: p.name, onClick: () => applyPresetTo(ids, p) }))]));
 }
+// Make these consistent (consistent.js) as a background job: the hero photo's render is measured,
+// then each other photo's Exposure, Temperature and Tint are solved on the editor's engine until its
+// render matches (its other edits stay). One Undo puts them all back.
+// The hero: the photo open in the editor when it is one of them, else the first selected.
+const heroOf = (ids) => { const cur = app.images[app.cur]; return cur && ids.includes(cur.id) ? cur : byIds(ids)[0]; };
+function queueConsistent(ids, heroId) {
+  return addJob({ kind: 'consistent', title: `Make consistent · ${plural(ids.length)}`, when: 'now', desc: { ids, heroId }, run: (job) => runConsistent(ids, heroId, job) });
+}
+// Puts photo `e` on the engine (RAWs developed at half size) and returns a renderer for its settings.
+const MATCH_PX = 256;
+async function matchRenderer(e) {
+  const file = await originalFile(e).catch(() => null);
+  if (!file) return null;
+  let src, sample, aspect, camKey = null, bitmap = null;
+  if (e.raw) {
+    const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1 });
+    src = { kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain };
+    sample = { data: lin.preview.data, w: lin.preview.w, h: lin.preview.h };
+    aspect = lin.w / lin.h; camKey = cameraKey(lin.meta || e.meta);
+  } else {
+    bitmap = (await decodeFile(file)).bitmap;
+    src = { kind: 'display', bitmap }; sample = sampleData(bitmap); aspect = bitmap.width / bitmap.height;
+  }
+  engineDirty = true;
+  await app.engine.setImage(src, computeStats(sample));
+  app.engine.camKey = camKey;
+  app.engine.setLensProfile(e.lensProfile || null);
+  return {
+    render: async (p) => {
+      const { crop } = p.geometry, ar = crop.w / crop.h;
+      const w = Math.max(1, Math.round(ar >= 1 ? MATCH_PX : MATCH_PX * ar)), h = Math.max(1, Math.round(ar >= 1 ? MATCH_PX / ar : MATCH_PX));
+      return { data: app.engine.readPixels(p, w, h, { ...outputMatsFor(p, aspect, w, h), scale: h / crop.h, cropTest: true }), w, h };
+    },
+    close: () => bitmap?.close?.(),
+  };
+}
+async function runConsistent(ids, heroId, job) {
+  const hero = app.images.find((x) => x.id === heroId), list = byIds(ids).filter((e) => e !== hero);
+  if (!hero || !list.length) return;
+  const found = new Map();
+  let partly = 0;
+  app._borrowed = true;   // the viewer holds still while the engine shows other photos
+  try {
+    job.setProgress(0, `Measuring “${hero.name}”`);
+    const hr = await matchRenderer(hero);
+    if (!hr) throw new Error(`The original of “${hero.name}” isn’t available`);
+    const hp = await hr.render(editOf(hero)), target = measureLook(hp.data, hp.w, hp.h);
+    hr.close();
+    for (const [k, e] of list.entries()) {
+      job.setProgress((k + 1) / (list.length + 1), `${k + 1} of ${list.length}`);
+      await breathe(job);
+      const r = await matchRenderer(e).catch(() => null);
+      if (!r) continue;
+      try {
+        const m = await matchTo(editOf(e), target, r.render);
+        found.set(e.id, m.params);
+        if (m.after.ev > 0.15 || m.after.cast > 2) partly++;
+      } finally { r.close(); }
+    }
+  } finally {
+    app._borrowed = false;
+    await restoreEngine();
+  }
+  if (!found.size) { app.toast('Nothing to match: the originals aren’t on this device'); return; }
+  changeEdits([...found.keys()], (p, a, e) => { const m = found.get(e.id); return { ...p, exposure: m.exposure, temp: m.temp, tint: m.tint }; },
+    `Matched ${plural(found.size)} to “${hero.name}”${partly ? ` (${partly} only partly: the light is too different)` : ''}`);
+}
+
 // Culling (cull.js) as a background job: per photo, sharpness and eyes from a 1024 px decode, then
 // the best of each burst is picked and clear misses rejected. One Undo puts every flag back.
 function queueCull(ids) {
@@ -2683,7 +2753,7 @@ function boot() {
     app.engine.hostPasses = chain(refocusPass, localAdjustments, studioPass, lensPass, motionPass);
     refocusPass.wake = () => app.requestRender();
     // Test hook: ?debug exposes the app to automated checks.
-    if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; }
+    if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; app._consistent = runConsistent; app._matchRenderer = matchRenderer; }
     if (!prefs.since) { prefs.since = Date.now(); savePrefs(); }   // for "Since you switched" in Settings
     app.engine.sourcePasses = retouchPasses;
     ai.onChange(() => { if (app.state.tool === 'ai' || app.state.tool === 'masks') app.refreshPanel(); app.requestRender(); });
@@ -2736,6 +2806,7 @@ function boot() {
     registerKind('denoise', (d, job) => denoisePhoto(d.id, d.strength, job));
     registerKind('merge', (d, job) => runMerge(d.ids, d.kind, job));
     registerKind('cull', (d, job) => runCull(d.ids, job));
+    registerKind('consistent', (d, job) => runConsistent(d.ids, d.heroId, job));
     restoreJobs();
     sweepFolders(true);
     setInterval(() => sweepFolders(false), 60000);
