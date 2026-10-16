@@ -40,6 +40,8 @@ export function defaultParams(aspect = 1.5) {
     retouch: [],
     // Match my camera: the camera's own colour, learned from its JPEGs (src/camera-match.js). RAWs only.
     cameraLook: false,
+    // Look (looks.js): a built-in film look ('film:…') or an imported .cube ('cube:…'), on display colour.
+    look: { lut: null, amount: 100 },
     ai: {
       refocus: { amount: 0, radius: -1, scope: 'subject', protect: 30 },
       blur: { amount: 0, focus: -1, range: 12, bokeh: 0, protect: true, sharpen: 0, blades: 0, catseye: 0 },
@@ -66,6 +68,7 @@ export const GROUPS = {
   curve: ['curve'],
   mixer: ['hsl'],
   grading: ['grading'],
+  look: ['look'],
   detail: ['sharpen', 'nr'],
   optics: ['optics'],
   retouch: ['retouch'],

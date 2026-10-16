@@ -4,6 +4,7 @@ import { slider, section, segmented, iconButton, button, popMenu, toggle } from 
 import { autoVertical } from './tool-crop.js';
 import { curveEditor, hslMixer, gradingControl } from './widgets.js';
 import { defaultParams } from './params.js';
+import { LOOKS } from './looks.js';
 
 const TEMP_TRACK = 'linear-gradient(90deg,#4f7dff,#9fb4d9 45%,#d9c49f 55%,#ffb53d)';
 const TINT_TRACK = 'linear-gradient(90deg,#3fcf5f,#9fcfa9 45%,#d3a5cf 55%,#e04fd8)';
@@ -29,6 +30,7 @@ export function buildEditPanel(app) {
     curve: { icon: 'curve', color: 'linear-gradient(135deg,#4be3b6,#139e76)' },
     mixer: { icon: 'mixer', color: 'conic-gradient(from 200deg,#ff5f5f,#ffd34d,#4de38a,#4dc3ff,#8a6bff,#ff5fc8,#ff5f5f)' },
     grading: { icon: 'wheel', color: 'linear-gradient(135deg,#ff8a65,#7c5cff)' },
+    look: { icon: 'presets', color: 'linear-gradient(135deg,#d4a373,#7f5539)' },
     detail: { icon: 'detail', color: 'linear-gradient(135deg,#a3acbd,#5a6376)' },
     optics: { icon: 'aperture', color: 'linear-gradient(135deg,#8fd3ff,#4a7bd6)' },
   };
@@ -112,6 +114,22 @@ export function buildEditPanel(app) {
       : `Learns how your ${key} renders color from the JPEGs inside its RAW files. On this device.`;
   } });
 
+  // --- look: film looks and imported .cube LUTs
+  const look = sec('Look', 'look', { id: 'look', open: false, onReset: resetPaths(['look']) });
+  const chips = el('div', { class: 'chips' });
+  const paintChips = () => {
+    const cur = app.params.look?.lut || null;
+    const opts = [[null, 'None'], ...Object.entries(LOOKS).map(([k, [name]]) => [k, name]), ...app.userLooks().map((l) => [l.key, l.name])];
+    chips.replaceChildren(...opts.map(([k, name]) => el('button', { class: 'chip' + (cur === k ? ' on' : ''), 'aria-pressed': String(cur === k), onclick: () => {
+      app.params.look = { lut: k, amount: app.params.look?.amount || 100 };
+      app.requestRender(); app.commit(); paintChips(); lookAmt.refresh();
+    } }, name)));
+  };
+  const lookAmt = slider({ label: 'Amount', min: 0, max: 100, def: 100, get: () => app.params.look?.amount ?? 100, set: (v) => { app.params.look = { ...app.params.look, amount: v }; app.requestRender(); }, commit: () => app.commit() });
+  look.body.append(chips, lookAmt.el, el('div', { class: 'row-btns' }, button('Import .cube…', () => app.importCube(), 'sm ghost', 'open')),
+    el('p', { class: 'hint' }, 'Film-style colour, or any 3D LUT (.cube) from a colourist or another editor.'));
+  reg.push({ refresh: () => { paintChips(); lookAmt.refresh(); } });
+
   // --- effects
   const fx = sec('Effects', 'effects', { id: 'effects', open: false, onReset: resetPaths(['texture', 'clarity', 'dehaze', 'haze', 'vignette', 'grain']) });
   fx.body.append(
@@ -189,6 +207,6 @@ export function buildEditPanel(app) {
     S('optics.horizontal', 'Horizontal', -100, 100),
   );
 
-  const root = el('div', { class: 'panel-view' }, tools, light.el, color.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);
+  const root = el('div', { class: 'panel-view' }, tools, light.el, color.el, look.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);
   return { el: root, refresh: () => reg.forEach((c) => c.refresh()) };
 }

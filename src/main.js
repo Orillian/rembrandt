@@ -51,6 +51,7 @@ import { buildMaskPanel, MaskOverlay, activeMask, removeMask, applyPick, addMask
 import { retouchPasses } from './retouch.js';
 import { hooks as fillHooks } from './inpaint.js';
 import * as clip from './ai/clip.js';
+import { LOOKS, lookTable, parseCube } from './looks.js';
 import { RetouchOverlay, buildRetouchPanel, retouchState, deleteSelected, newSourceForSelected } from './tool-retouch.js';
 import { buildPresetsPanel, allPresets } from './panel-presets.js';
 import { computeHistogram, drawHistogram } from './histogram.js';
@@ -380,6 +381,8 @@ const app = {
   },
 
   editLikeMe(ids) { return editLikeMe(ids || [this.images[this.cur]?.id].filter(Boolean)); },
+  importCube: () => importCube(),
+  userLooks: () => prefs.luts || [],
 
   autoTone() {
     if (this.img) this.developFX?.play({ params: clone(this.params), hold: new Promise((r) => setTimeout(r, 120)), minHold: 120 });
@@ -2322,11 +2325,45 @@ const withCam = (eng, p) => {
   const look = p?.cameraLook && eng.camKey && prefs.cameraLooks?.[eng.camKey]?.look;
   return look ? { ...p, _camLook: look } : p;
 };
+// Looks (looks.js): a built-in look's table is made the first time it's used; an imported .cube
+// loads from the catalog (rendering without it meanwhile; an export waits for it).
+const lutLoads = new Map();
+function loadLook(eng, p) {
+  const key = p?.look?.lut;
+  if (!key || eng.hasLut(key)) return null;
+  if (LOOKS[key]) { const t = lookTable(key); eng.setLut(key, t.size, t.data); return null; }
+  if (!lutLoads.has(key)) {
+    lutLoads.set(key, catalog.getFile(key).then(async (f) => {
+      if (!f) return;
+      const c = parseCube(await f.text());
+      eng.setLut(key, c.size, c.data);
+      app.requestRender();
+    }).catch((e) => console.warn('look', key, e)).finally(() => lutLoads.delete(key)));
+  }
+  return lutLoads.get(key);
+}
 class AppEngine extends Engine {
-  render(p, v) { return super.render(withCam(this, effectiveParams(p)), { bg: canvasBg, ...v }); }
+  render(p, v) { loadLook(this, p); return super.render(withCam(this, effectiveParams(p)), { bg: canvasBg, ...v }); }
   renderBefore(p, v) { return super.renderBefore(effectiveParams(p), { bg: canvasBg, ...v }); }
-  readPixels(p, w, h, v) { return super.readPixels(withCam(this, effectiveParams(p)), w, h, v); }
-  exportPixels(p, ...rest) { return super.exportPixels(withCam(this, effectiveParams(p)), ...rest); }
+  readPixels(p, w, h, v) { loadLook(this, p); return super.readPixels(withCam(this, effectiveParams(p)), w, h, v); }
+  async exportPixels(p, ...rest) { await loadLook(this, p); return super.exportPixels(withCam(this, effectiveParams(p)), ...rest); }
+}
+// Imports a .cube file as a look for every photo, and applies it to this one.
+async function importCube() {
+  const input = el('input', { type: 'file', accept: '.cube' });
+  const file = await new Promise((ok) => { input.addEventListener('change', () => ok(input.files[0])); input.click(); });
+  if (!file) return;
+  try {
+    const c = parseCube(await file.text());
+    const key = 'cube:' + catalog.photoKey(file);
+    await catalog.storeFile(key, file);
+    app.engine.setLut(key, c.size, c.data);
+    const name = c.title || file.name.replace(/\.cube$/i, '');
+    prefs.luts = [...(prefs.luts || []).filter((l) => l.key !== key), { key, name }];
+    savePrefs();
+    if (app.params) { app.params.look = { lut: key, amount: 100 }; app.commit(); app.requestRender(); app.refreshPanel(); }
+    app.toast(`Added the look “${name}”`);
+  } catch (e) { app.toast(`Couldn’t use that file: ${e.message}`); }
 }
 async function renderPhotoForExport(id, opts) {
   const e = app.images.find((x) => x.id === id);

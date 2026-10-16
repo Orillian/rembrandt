@@ -400,6 +400,9 @@ uniform vec2 uSharp, uNR;
 uniform vec4 uVig;
 uniform vec3 uGrain;
 uniform int uCamOn;
+uniform int uLutOn;
+uniform highp sampler3D uLut;
+uniform float uLutN, uLutAmt;
 uniform float uCamL[17], uCamGain[8], uCamShift[8];
 in vec2 vUv; out vec4 o;
 
@@ -536,6 +539,12 @@ void main() {
     s = vec3(texture(uCurve, vec2(cx.r, 0.5)).a, texture(uCurve, vec2(cx.g, 0.5)).a, texture(uCurve, vec2(cx.b, 0.5)).a);
     cx = clamp(s, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0;
     s = vec3(texture(uCurve, vec2(cx.r, 0.5)).r, texture(uCurve, vec2(cx.g, 0.5)).g, texture(uCurve, vec2(cx.b, 0.5)).b);
+  }
+
+  // Look (a film look or a .cube file): a 3D table on the display-encoded colour, blended by Amount.
+  if (uLutOn == 1) {
+    vec3 c = clamp(s, 0.0, 1.0) * ((uLutN - 1.0) / uLutN) + 0.5 / uLutN;
+    s = mix(s, texture(uLut, c).rgb, uLutAmt);
   }
 
   if (uVig.x != 0.0) {

@@ -146,6 +146,11 @@ export class Engine {
           gl.bindTexture(gl.TEXTURE_2D, val);
           gl.uniform1i(u.loc, unit++);
           break;
+        case gl.SAMPLER_3D:
+          gl.activeTexture(gl.TEXTURE0 + unit);
+          gl.bindTexture(gl.TEXTURE_3D, val || this.dummy3d());
+          gl.uniform1i(u.loc, unit++);
+          break;
         case gl.FLOAT: u.size > 1 ? gl.uniform1fv(u.loc, val) : gl.uniform1f(u.loc, val); break;
         case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, val); break;
         case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, val); break;
@@ -159,6 +164,10 @@ export class Engine {
       if (u.type === gl.SAMPLER_2D && !(name in uniforms)) {
         gl.activeTexture(gl.TEXTURE0 + unit);
         gl.bindTexture(gl.TEXTURE_2D, this.dummy);
+        gl.uniform1i(u.loc, unit++);
+      } else if (u.type === gl.SAMPLER_3D && !(name in uniforms)) {
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_3D, this.dummy3d());
         gl.uniform1i(u.loc, unit++);
       }
     }
@@ -465,8 +474,32 @@ export class Engine {
     return L.out;
   }
 
+  // 3D colour lookup tables (looks and .cube files): `data` is size³ RGB (red fastest), 0–1.
+  setLut(key, size, data) {
+    const gl = this.gl;
+    this.luts ||= new Map();
+    if (this.luts.has(key)) return;
+    const rgba = new Float32Array(size * size * size * 4);
+    for (let i = 0; i < size * size * size; i++) { rgba[i * 4] = data[i * 3]; rgba[i * 4 + 1] = data[i * 3 + 1]; rgba[i * 4 + 2] = data[i * 3 + 2]; rgba[i * 4 + 3] = 1; }
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_3D, t);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.FLOAT, rgba);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
+    this.luts.set(key, { tex: t, size });
+  }
+  hasLut(key) { return !!this.luts?.has(key); }
+  dummy3d() {
+    if (this._dummy3d) return this._dummy3d;
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_3D, t);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    return (this._dummy3d = t);
+  }
+
   finalUniforms(p, out, v) {
+    const lut = p.look?.lut && p.look.amount ? this.luts?.get(p.look.lut) : null;
     return {
+      uLutOn: lut ? 1 : 0, uLut: lut?.tex || null, uLutN: lut?.size || 2, uLutAmt: (p.look?.amount ?? 0) / 100,
       ...finalUniforms(p, this.fullW, this.fullH, this.L.h, this.linear),
       uIn: out.tex, uCurve: this.curve,
       uCurveOn: curveIsIdentity(p.curve) ? 0 : 1,

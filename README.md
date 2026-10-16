@@ -86,6 +86,8 @@ checks it against the published SHA-256 sums, and restarts the server.
   (Settings › Performance). The queue survives restarts.
 - **Merge**: HDR from brackets, panoramas and focus stacks, each to a RAW-like DNG.
 - **RAW** from 1,000+ cameras, developed on the GPU: tone, colour, curves, grading, dehaze, detail.
+- **Looks**: film-style colour (Portrait 400, Vivid 50, Chrome, Tungsten 800, Matte, Pan 400 B&W) with
+  an Amount slider, and your own 3D LUTs: import any `.cube` file once and use it on every photo.
 - **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth, and
   People: face skin, body skin, hair, eyebrows, eye whites, irises, lips, teeth and clothes.
 - **Remove**: paint over anything and **Generative Remove** fills it with what was most likely behind it
