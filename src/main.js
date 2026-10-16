@@ -50,6 +50,7 @@ import { buildCropPanel, CropOverlay, refitCrop } from './tool-crop.js';
 import { buildMaskPanel, MaskOverlay, activeMask, removeMask, applyPick, addMask } from './tool-masks.js';
 import { retouchPasses } from './retouch.js';
 import { hooks as fillHooks } from './inpaint.js';
+import * as clip from './ai/clip.js';
 import { RetouchOverlay, buildRetouchPanel, retouchState, deleteSelected, newSourceForSelected } from './tool-retouch.js';
 import { buildPresetsPanel, allPresets } from './panel-presets.js';
 import { computeHistogram, drawHistogram } from './histogram.js';
@@ -1010,6 +1011,7 @@ async function importItems(items, opts = {}) {
   } else if (bad) app.toast(bad, { ms: 6000 });
   if (opts.catalog?.report && done.length) showMigrationReport(opts.catalog, fresh);
   updateEmpty();
+  if (done.length) queueSmartIndex();
   return done;
 }
 
@@ -1914,6 +1916,47 @@ async function editLikeMe(ids) {
   return found;
 }
 
+// Smart search (ai/clip.js): each photo's thumbnail becomes a CLIP embedding, kept with the photo;
+// a search ranks photos by how close they are to the words. Indexing is a background job that pauses
+// while you edit; new photos are added as they're imported.
+let smartQueued = false;
+export const smartState = { progress: '', listeners: new Set() };
+const smartSay = (t) => { smartState.progress = t; smartState.listeners.forEach((f) => f(t)); };
+function queueSmartIndex() {
+  if (!prefs.smartSearch || smartQueued) return;
+  smartQueued = true;
+  addJob({ kind: 'smart-index', title: 'Smart search', when: 'now', desc: {}, run: runSmartIndex });
+}
+async function runSmartIndex(job) {
+  try {
+    if (!(await clip.downloaded())) smartSay('Downloading the search model…');
+    await clip.load((f) => { job.setProgress(f * 0.3, `Downloading the search model · ${Math.round(f * 100)}%`); smartSay(`Downloading the search model · ${Math.round(f * 100)}%`); });
+    const todo = app.images.filter((e) => e.clip?.v !== 1);
+    for (const [k, e] of todo.entries()) {
+      job.setProgress(0.3 + 0.7 * k / todo.length, `Reading photo ${k + 1} of ${todo.length}`);
+      if (k % 10 === 0) smartSay(`Reading your photos · ${k} of ${todo.length}`);
+      await breathe(job);
+      if (!app.images.includes(e)) continue;
+      const blob = await catalog.getThumb(e.id).catch(() => null);
+      if (!blob) continue;
+      const bm = await createImageBitmap(blob).catch(() => null);
+      if (!bm) continue;
+      try { e.clip = clip.pack(await clip.imageEmbedding(bm)); } finally { bm.close(); }
+      catalog.updatePhoto(e.id, { clip: e.clip });
+    }
+    smartSay(`Ready · ${app.images.filter((e) => e.clip).length} photos`);
+  } catch (err) { smartSay(`Couldn’t set up Smart search: ${err.message}`); throw err; } finally { smartQueued = false; }
+}
+// Photo id → score for a search, best first, or null when Smart search is off or not set up yet.
+async function smartScores(q) {
+  if (!prefs.smartSearch || q.length < 2 || !(await clip.downloaded())) return null;
+  const tv = await clip.textEmbedding(q);
+  const scored = app.images.filter((e) => e.clip?.v === 1).map((e) => [e.id, clip.similarity(tv, e.clip)]).sort((a, b) => b[1] - a[1]);
+  const best = scored[0]?.[1] ?? 0;
+  // CLIP ViT-B/32 puts matching photos at about 0.25–0.36 and the rest below 0.235.
+  return new Map(scored.filter(([, v]) => v >= 0.235 && v >= best - 0.045));
+}
+
 // Make these consistent (consistent.js) as a background job: the hero photo's render is measured,
 // then each other photo's Exposure, Temperature and Tint are solved on the editor's engine until its
 // render matches (its other edits stay). One Undo puts them all back.
@@ -2623,6 +2666,8 @@ const accountHooks = {
   },
   albums: () => albums.allAlbums(),
   openPlan: () => setMode('account', 'cloud'),
+  smartSearch: (on) => { prefs.smartSearch = on; savePrefs(); if (on) queueSmartIndex(); library?.refresh?.(); },
+  smartState,
   back: () => setMode(modeBeforeAccount === 'account' ? 'library' : modeBeforeAccount),
   uploadMissingOriginals,
   freeDeviceSpace,
@@ -2866,6 +2911,7 @@ function boot() {
     watchFolder: watchDialog,
     reconnectFolder: async (f) => { if (await folders.reconnect(f)) syncFolder(f); },
     stripChanged: renderStrip,
+    smartScores,
     openPlan: () => setMode('account', 'cloud'),
     openAccount: (section) => setMode('account', section),
     share: sharePhotos,
@@ -2888,6 +2934,7 @@ function boot() {
     registerKind('denoise', (d, job) => denoisePhoto(d.id, d.strength, job));
     registerKind('merge', (d, job) => runMerge(d.ids, d.kind, job));
     registerKind('cull', (d, job) => runCull(d.ids, job));
+    registerKind('smart-index', (d, job) => { smartQueued = true; return runSmartIndex(job); });
     registerKind('consistent', (d, job) => runConsistent(d.ids, d.heroId, job));
     restoreJobs();
     sweepFolders(true);

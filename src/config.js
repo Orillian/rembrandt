@@ -37,6 +37,10 @@ const DEFAULTS = {
   dropboxAppKey: '',        // Dropbox app key (Chooser); add your domain under "Chooser / Saver domains"
   onedriveClientId: '',     // Microsoft Entra app (SPA) client id
   adobeClientId: '',        // Adobe Developer Console: OAuth Single-Page App credential with the Lightroom API
+
+  // Smart search model files (src/ai/clip.js): defaults to the pinned Hugging Face revision; a
+  // self-hosted copy can serve them from its own folder, e.g. 'models/clip/'.
+  clipBase: '',
 };
 
 export const CONFIG = { ...DEFAULTS, ...(globalThis.LUMEN_CONFIG || {}), prices: { ...DEFAULTS.prices, ...(globalThis.LUMEN_CONFIG?.prices || {}) } };

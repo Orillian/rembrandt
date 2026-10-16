@@ -107,6 +107,9 @@ checks it against the published SHA-256 sums, and restarts the server.
   aberration), plus manual distortion and vignetting for any photo. Auto straighten levels horizons;
   Transform's Vertical and Horizontal fix converging lines, and Auto makes a building's verticals parallel.
 - **On-device AI**: Refocus, background replacement. Nothing is uploaded.
+- **Smart search**: type “dog on the beach” or “red car” and find the photos, with no keywording.
+  On-device (CLIP, a 155 MB model downloaded once when you turn it on in Preferences); photos and
+  searches never leave your computer.
 - **Library**: albums, ratings, flags, colour labels, keywords, virtual copies, search, Find similar,
   sorting, keyboard shortcuts (or Lightroom's), one-click delete with Undo.
 - **Batch**: copy and paste edits to hundreds of photos, batch export, and presets that fit each

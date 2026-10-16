@@ -47,3 +47,14 @@ Runs on the CPU through ONNX Runtime Web (`src/vendor/ort/`, MIT), so it works o
 Inputs: `image` uint8 `[1, 3, H, W]` RGB and `mask` uint8 `[1, 1, H, W]` (0 = fill, 255 = keep); output
 `result` uint8 `[1, 3, H, W]`. MI-GAN is Copyright (c) 2024 Picsart AI Research, under the MIT license
 (`LICENSE-MI-GAN`).
+
+## Smart search
+
+Not bundled: downloaded once when Smart search is turned on (Preferences), from a pinned revision,
+checked against SHA-256 and kept in the browser's cache. Runs on the CPU through ONNX Runtime Web.
+
+| File | Purpose | Source (MIT) |
+|---|---|---|
+| `vision_model_quantized.onnx`, `text_model_int8.onnx`, `tokenizer.json` | Smart search: OpenAI CLIP ViT-B/32 (Radford et al. 2021), image and text encoders, ONNX conversion and quantization by Xenova | `huggingface.co/Xenova/clip-vit-base-patch32` at `d15189d7028b43f1d3e65039190477f6af591c2a` |
+
+Self-hosters can serve the same three files themselves and set `clipBase` in `window.LUMEN_CONFIG`.

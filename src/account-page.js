@@ -10,6 +10,7 @@ import * as sb from './backend/supabase.js';
 import * as api from './backend/account-api.js';
 import { checkout, billingConfigured } from './backend/billing.js';
 import { backendConfigured, CONFIG } from './config.js';
+import { DOWNLOAD_MB as clipMB } from './ai/clip.js';
 import { exportDefaults, saveExportDefaults, WATERMARK } from './export.js';
 import { prefs, savePrefs } from './account.js';
 import { getAppearance, setAppearance } from './theme.js';
@@ -390,6 +391,7 @@ export function buildAccountPage(app, hooks) {
       card('Appearance', field('Theme', look.el), toggle('Opening animation', () => prefs.splash !== false, (v) => { prefs.splash = v; savePrefs(); }).el),
       card('Editing', field('RAW development', rawQ.el, 'Detailed is slower but resolves fine texture better.'), field('Preview resolution', prevQ.el, 'Sharp uses more graphics memory.'),
         field('Keyboard shortcuts', keys.el, 'Lightroom: P, X and U flag in Edit too, V black & white, K masks, Shift+P presets, ⌘K keywords, ⌘U auto, ⌘⇧R reset, ⌘⇧E export, ⌘⇧I import.')),
+      smartCard(),
       card('Performance',
         field('While you edit', perfSeg.el, 'How much of the graphics card background work may use while you work. Smooth editing gives it the smallest slices.'),
         field('Heavy AI work runs', whenSeg.el, 'AI Denoise, Super Resolution and merges. Away means no input for a minute, or Rembrandt in the background; it then runs at full speed.'),
@@ -404,6 +406,16 @@ export function buildAccountPage(app, hooks) {
         field('Copyright', textPref('copyright', '© 2026 Your Name'), 'Written into every exported photo. Location is never included.')),
       card('Watermark', ...watermarkFields()),
     ];
+  }
+
+  // Smart search: on asks for the one-time model download, then indexes the library in the background.
+  function smartCard() {
+    const status = el('p', { class: 'hint' }, hooks.smartState?.progress || '');
+    hooks.smartState?.listeners.add((t) => { status.textContent = t; });
+    return card('Smart search',
+      toggle('Search photos by what’s in them', () => !!prefs.smartSearch, (v) => { hooks.smartSearch(v); status.textContent = v ? (hooks.smartState.progress || 'Starting…') : 'Off. Search looks at names, keywords and cameras.'; }).el,
+      el('p', { class: 'hint' }, `Type “dog on the beach” or “red car” in the library search. Uses a ${clipMB} MB model, downloaded once; your photos and searches stay on this device.`),
+      status);
   }
 
   function data() {

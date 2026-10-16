@@ -185,8 +185,20 @@ export function buildLibrary(app, api) {
   const search = el('input', { class: 'text-input lib-search', type: 'search', placeholder: 'Search photos', 'aria-label': 'Search photos', id: 'libSearch' });
   // Typing waits for a short pause before filtering: each refresh of a large library costs a frame or more.
   let searchTimer = 0;
-  search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { query = search.value.trim().toLowerCase(); refresh(); }, app.images.length > 2000 ? 140 : 0); });
-  search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { search.value = ''; query = ''; refresh(); search.blur(); } });
+  // Smart search (by what's in the photo) arrives a moment after the instant name and keyword matches.
+  let smart = null, smartTimer = 0;
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer); clearTimeout(smartTimer);
+    searchTimer = setTimeout(() => { query = search.value.trim().toLowerCase(); refresh(); }, app.images.length > 2000 ? 140 : 0);
+    smartTimer = setTimeout(async () => {
+      const q = search.value.trim().toLowerCase();
+      const scores = q ? await api.smartScores?.(q).catch(() => null) : null;
+      if (q !== search.value.trim().toLowerCase()) return;
+      smart = scores ? { q, scores } : null;
+      refresh();
+    }, 350);
+  });
+  search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { search.value = ''; query = ''; smart = null; refresh(); search.blur(); } });
   // On a phone the sidebar is a drawer over the photos; on bigger screens it's a column you can hide.
   const sideBtn = iconButton('sidebar', 'Albums and collections', () => {
     if (isNarrow()) { root.classList.toggle('side-open'); return; }
@@ -305,7 +317,11 @@ export function buildLibrary(app, api) {
     else if (f) list = list.filter((e) => e.src?.folder === f.id);
     else if (prefs.view !== 'albums') list = list.filter((SMART.find((s) => s.id === prefs.view) || SMART[0]).test);
     if (prefs.view !== 'rejected' && !a && !f && prefs.view !== 'all') list = list.filter((e) => e.flag !== -1);
-    if (query) list = list.filter((e) => [e.name, e.copyName, e.meta?.make, e.meta?.model, e.kind, e.label, ...(e.keywords || [])].join(' ').toLowerCase().includes(query));
+    const words = (e) => [e.name, e.copyName, e.meta?.make, e.meta?.model, e.kind, e.label, ...(e.keywords || [])].join(' ').toLowerCase().includes(query);
+    const sm = query && smart?.q === query ? smart.scores : null;
+    if (query) list = list.filter((e) => words(e) || sm?.has(e.id));
+    // Smart search results: most relevant first (name and keyword matches before them).
+    if (sm?.size) return list.sort((x, y) => (sm.get(y.id) ?? 1) - (sm.get(x.id) ?? 1));
     if (prefs.sort === 'name') list.sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
     else if (prefs.sort === 'captured') list.sort((x, y) => takenAt(y) - takenAt(x));
     else if (prefs.sort === 'captured-asc') list.sort((x, y) => takenAt(x) - takenAt(y));
