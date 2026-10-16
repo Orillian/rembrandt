@@ -397,7 +397,7 @@ body.dragging .drop-veil { display: grid; }
 .panel-body { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .panel-view { padding-bottom: 32px; }
 body:not(.has-image) .panel-body { opacity: 0.35; pointer-events: none; }
-.edit-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; gap: 6px; padding: 6px 12px 8px; }
+.edit-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 0.85fr) 32px; align-items: stretch; gap: 6px; padding: 6px 12px 8px; }
 /* Auto, Color, B&W and More are four equal cells: the Color / B&W pair is unwrapped into the grid. */
 .edit-tools > .grow { display: none; }
 .edit-tools .treatment { display: contents; }

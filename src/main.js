@@ -36,6 +36,7 @@ import { openShare } from './share.js';
 import { paintAvatar, prefs, savePrefs } from './account.js';
 import { cameraKey, learnCamera } from './camera-match.js';
 import { measure as measureLook, matchTo } from './consistent.js';
+import { features as styleFeatures, predict as predictStyle, nested as nestedSettings, TONE as STYLE_TONE, LOOK as STYLE_LOOK, MIN_EXAMPLES } from './style.js';
 import { buildAccountPage } from './account-page.js';
 import { listOnlineOriginals } from './backend/account-api.js';
 import * as cloud from './cloud.js';
@@ -155,7 +156,9 @@ const app = {
     e.params = app.params;
     e.edited = true;
     e.updatedAt = Date.now();
-    catalog.updatePhoto(e.id, { params: app.params, edited: true, updatedAt: e.updatedAt }).catch(() => {});
+    // Edit like me learns from what the photo looked like before you edited it.
+    const look0 = !e.look0 && e.sample ? (e.look0 = startOfPhoto(e)) : undefined;
+    catalog.updatePhoto(e.id, { params: app.params, edited: true, updatedAt: e.updatedAt, ...(look0 && { look0 }) }).catch(() => {});
     cloud.pushPhoto(e);
     queueSidecar(e);
     saveThumb();
@@ -373,6 +376,8 @@ const app = {
     }
     return acc.map((a) => a / n);
   },
+
+  editLikeMe(ids) { return editLikeMe(ids || [this.images[this.cur]?.id].filter(Boolean)); },
 
   autoTone() {
     if (this.img) this.developFX?.play({ params: clone(this.params), hold: new Promise((r) => setTimeout(r, 120)), minHold: 120 });
@@ -1823,6 +1828,7 @@ function photoMenu(ids, anchor, extra = []) {
     { label: 'Apply preset…', icon: 'presets', onClick: () => presetMenu(ids, anchor) },
     { label: n > 1 ? `Reset edits on ${n} photos` : 'Reset edits', icon: 'reset', onClick: () => resetEdits(ids) },
     n === 1 ? { label: 'Find similar', icon: 'search', onClick: () => findSimilar(ids[0]) } : null,
+    { label: n > 1 ? `Edit ${n} like me` : 'Edit like me', icon: 'sparkle', onClick: () => editLikeMe(ids) },
     n > 1 ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => queueCull(ids) } : null,
     n > 1 ? (() => { const hero = heroOf(ids); return { label: `Make consistent with “${hero.name}”`, icon: 'sliders', onClick: () => queueConsistent(ids, hero.id) }; })() : null,
     ...extra,
@@ -1833,6 +1839,48 @@ function presetMenu(ids, anchor) {
   for (const p of allPresets()) (groups[p.group || 'Your presets'] ||= []).push(p);
   popMenu(anchor, Object.entries(groups).flatMap(([g, list], i) => [i ? { sep: true } : null, { head: g }, ...list.map((p) => ({ label: p.name, onClick: () => applyPresetTo(ids, p) }))]));
 }
+// Edit like me (style.js): the photo's starting point, its settings predicted from your edited photos
+// that started out most like it. Photos edited before Rembrandt kept starting points get theirs from
+// the file (the 60 most recent at a time).
+const startOfPhoto = (e, sample = e.sample) => ({ f: styleFeatures(sample), base: toneBase(sample) });
+async function startFromFile(e) {
+  const f = await originalFile(e).catch(() => null);
+  if (!f) return null;
+  const d = await decodeFile(f);
+  const start = startOfPhoto(e, sampleData(d.bitmap, 256));
+  d.bitmap.close?.();
+  return start;
+}
+const D0 = defaultParams();
+const isStyled = (p) => [...STYLE_TONE, ...STYLE_LOOK].some((k) => k.split('.').reduce((o, x) => o?.[x], p) !== k.split('.').reduce((o, x) => o?.[x], D0));
+async function editLikeMe(ids) {
+  const skip = new Set(ids);
+  const edited = app.images.filter((e) => e.edited && e.params && !skip.has(e.id) && isStyled(editOf(e)))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 300);
+  let filled = 0;
+  for (const e of edited) {
+    if (e.look0 || filled >= 60) continue;
+    await whenQuiet();
+    const start = await startFromFile(e).catch(() => null);
+    if (start) { touch(e, { look0: start }); filled++; }
+  }
+  const examples = edited.filter((e) => e.look0).map((e) => ({ start: e.look0, params: editOf(e) }));
+  if (examples.length < MIN_EXAMPLES) {
+    app.toast(`Edit like me learns from photos you’ve edited: edit ${MIN_EXAMPLES - examples.length} more first`);
+    return null;
+  }
+  const found = new Map();
+  for (const e of byIds(ids)) {
+    const start = e.sample ? startOfPhoto(e) : await startFromFile(e).catch(() => null);
+    const r = start && predictStyle(examples, start);
+    if (r) found.set(e.id, r.settings);
+  }
+  if (!found.size) return null;
+  changeEdits([...found.keys()], (p, a, e) => deepMerge(clone(p), nestedSettings(found.get(e.id))),
+    `Edited like you${found.size > 1 ? `: ${plural(found.size)}` : ''} (learned from ${plural(examples.length)})`);
+  return found;
+}
+
 // Make these consistent (consistent.js) as a background job: the hero photo's render is measured,
 // then each other photo's Exposure, Temperature and Tint are solved on the editor's engine until its
 // render matches (its other edits stay). One Undo puts them all back.

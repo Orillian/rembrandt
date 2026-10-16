@@ -54,6 +54,7 @@ export function buildEditPanel(app) {
 
   const tools = el('div', { class: 'edit-tools' },
     button('Auto', () => app.autoTone(), 'sm', 'wand'),
+    Object.assign(button('Like me', () => app.editLikeMe(), 'sm', 'sparkle'), { title: 'Edit like me: settings learned from the photos you’ve edited' }),
     treatment.el,
     el('span', { class: 'grow' }),
     iconButton('more', 'More', (e) => popMenu(e.currentTarget, [
