@@ -71,7 +71,8 @@ const lumenProvider = {
   async pullAll() {
     const rows = await sb.rest(`photos?select=*&user_id=eq.${state.uid}`);
     this.since = rows.reduce((m, r) => Math.max(m, new Date(r.updated_at).getTime()), 0);
-    return rows.filter((r) => !r.deleted).map(fromRow);
+    // Deleted photos come too, so a device that still has one removes it instead of uploading it again.
+    return rows.map((r) => ({ ...fromRow(r), deleted: !!r.deleted }));
   },
   subscribe(onRemote) {
     const poll = async () => {

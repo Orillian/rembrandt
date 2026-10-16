@@ -677,6 +677,7 @@ async function loadCatalog() {
   const recs = await catalog.listPhotos();
   // A linked photo without a copy here is back in its service after a restart.
   app.images = recs.map((r) => newEntry(r.linked && !r.stored && !r.src ? { ...r, offline: true } : r));
+  await finishPendingDeletes();
   await Promise.all(app.images.map(async (e) => {
     const b = await catalog.getThumb(e.id);
     if (b) thumbURL(e, b);
@@ -768,16 +769,23 @@ async function startSync() {
   }
   await syncAcked;
   const remote = await cloud.pullAll();
-  const seen = new Set();
-  for (const r of remote) { seen.add(r.key); await mergeRemote(r); }
+  const byKey = new Map(remote.map((r) => [r.key, r]));
+  // Deleted on another device (or the web): gone here too. A delete always wins, so a photo you
+  // deleted never comes back from a device that still had it.
+  const gone = app.images.filter((e) => byKey.get(e.key)?.deleted).map((e) => e.id);
+  if (gone.length) await removePhotos(gone, { local: true });
+  for (const r of remote) if (!r.deleted) await mergeRemote(r);
   // Upload anything this device has that the account doesn't, or has newer.
   for (const e of app.images) {
-    const r = remote.find((x) => x.key === e.key);
-    if (!r || (e.updatedAt || 0) > (r.updatedAt || 0)) cloud.pushPhoto(e);
+    const r = byKey.get(e.key);
+    if (!r || (!r.deleted && (e.updatedAt || 0) > (r.updatedAt || 0))) cloud.pushPhoto(e);
   }
   refreshLibrary();
   renderStrip();
-  const stopPhotos = cloud.subscribe((type, r) => { if (type !== 'removed') mergeRemote(r).then(() => { refreshLibrary(); renderStrip(); }); });
+  const stopPhotos = cloud.subscribe((type, r) => {
+    if (type === 'removed') { const e = app.images.find((x) => x.key === r.key); if (e) removePhotos([e.id], { local: true }); return; }
+    mergeRemote(r).then(() => { refreshLibrary(); renderStrip(); });
+  });
   const remoteAlbums = await cloud.pullAlbums();
   for (const r of remoteAlbums) await albums.mergeRemoteAlbum(r);
   albums.pushAllAlbums(remoteAlbums);
@@ -1572,18 +1580,40 @@ function detachPhotos(ids) {
   return removed;
 }
 
-async function finalizeDelete(entries) {
-  for (const e of entries) { e.bitmap?.close?.(); thumbURL(e, null); cloud.deletePhoto(e.key); }
+async function finalizeDelete(entries, { local = false } = {}) {
+  for (const e of entries) { e.bitmap?.close?.(); thumbURL(e, null); if (!local) cloud.deletePhoto(e.key); }
   albums.forgetKeys(entries.map((e) => e.key));
   await catalog.removePhotos(entries.map((e) => e.id));
 }
 
+// A delete waits a few seconds for Undo. The photos are noted in localStorage meanwhile, so quitting
+// in those seconds still deletes them (finished at the next start, and when the window closes).
+const PENDING_KEY = 'rembrandt:pendingDelete';
+const pendingIds = () => { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch { return []; } };
+const notePending = (ids, add = true) => {
+  try {
+    const set = new Set(pendingIds());
+    for (const id of ids) add ? set.add(id) : set.delete(id);
+    if (set.size) localStorage.setItem(PENDING_KEY, JSON.stringify([...set])); else localStorage.removeItem(PENDING_KEY);
+  } catch { /* storage off: the timer still deletes */ }
+};
 function commitPendingDelete() {
   if (!pendingDelete) return;
   const { removed, timer } = pendingDelete;
   pendingDelete = null;
   clearTimeout(timer);
-  finalizeDelete(removed.map(([e]) => e));
+  const entries = removed.map(([e]) => e);
+  // The note stays until the photos are really gone (the window may close half way).
+  finalizeDelete(entries).then(() => notePending(entries.map((e) => e.id), false));
+}
+addEventListener('pagehide', commitPendingDelete);
+async function finishPendingDeletes() {
+  const ids = pendingIds(), set = new Set(ids), gone = app.images.filter((e) => set.has(e.id));
+  if (gone.length) {
+    app.images = app.images.filter((e) => !set.has(e.id));   // at start: nothing open yet
+    await finalizeDelete(gone);
+  }
+  notePending(ids, false);
 }
 
 // Two clicks: every delete (the photo's trash button, the toolbar, the menus, the Delete key) asks in
@@ -1619,12 +1649,14 @@ function deleteNow(ids) {
   const n = removed.length;
   const timer = setTimeout(commitPendingDelete, 9000);
   pendingDelete = { removed, timer };
+  notePending(removed.map(([e]) => e.id));
   app.toast(`Deleted ${n} photo${n === 1 ? '' : 's'}`, {
     ms: 9000,
     action: { label: 'Undo', onClick: () => {
       if (pendingDelete?.removed !== removed) return;
       clearTimeout(timer);
       pendingDelete = null;
+      notePending(removed.map(([e]) => e.id), false);
       const cur = app.images[app.cur];
       for (const [e, i] of removed) app.images.splice(Math.min(i, app.images.length), 0, e);
       if (cur) app.cur = app.images.indexOf(cur);
@@ -1636,9 +1668,9 @@ function deleteNow(ids) {
 }
 
 // Immediate removal without Undo (clearing the whole library from Preferences, which asks first).
-async function removePhotos(ids) {
+async function removePhotos(ids, opts) {
   commitPendingDelete();
-  await finalizeDelete(detachPhotos(ids).map(([e]) => e));
+  await finalizeDelete(detachPhotos(ids).map(([e]) => e), opts);
 }
 
 function touch(e, patch) {
