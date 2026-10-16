@@ -174,6 +174,28 @@ async function run(op, bitmap, point) {
     }
     return guided(L, m, w, h, r, 4e-4);
   }
+  if (op === 'persons') {
+    // Every person, however small (Remove › People in the background): DeepLab's person class, on
+    // the whole photo and on 3 × 3 overlapping tiles, so people far away are big enough to see.
+    const gen = await segmenter('subject-general');
+    const out = new Float32Array(w * h);
+    const pass = (src, x0, y0, tw, th) => {
+      const gr = gen.segment(src);
+      const m = mask0(gr, 15); closeAll(gr);
+      const r = m.data.length === tw * th ? m.data : resize(m.data, m.w, m.h, tw, th);
+      for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) { const i = (y0 + y) * w + x0 + x; if (r[y * tw + x] > out[i]) out[i] = r[y * tw + x]; }
+    };
+    pass(bitmap, 0, 0, w, h);
+    const tw = Math.round(w * 0.4), th = Math.round(h * 0.4);
+    for (let ty = 0; ty < 3; ty++) for (let tx = 0; tx < 3; tx++) {
+      const x0 = Math.round((w - tw) * tx / 2), y0 = Math.round((h - th) * ty / 2);
+      const c = new OffscreenCanvas(tw, th); c.getContext('2d').drawImage(bitmap, x0, y0, tw, th, 0, 0, tw, th);
+      const tile = c.transferToImageBitmap();
+      pass(tile, x0, y0, tw, th);
+      tile.close();
+    }
+    return out;
+  }
   if (op === 'people') {
     // Multiclass selfie segmenter: background, hair, body skin, face skin, clothes, other.
     // Out: hair, body skin, face skin, clothes, then the whole person, each w × h.

@@ -7,6 +7,8 @@
 | `src/vendor/mediapipe/` | MediaPipe Tasks Vision 1.0.1, Apache-2.0 |
 | `models/*.tflite` | MediaPipe / Google models, Apache-2.0 (see `models/README.md`) |
 | `models/sr-general-x4.bin` | Real-ESRGAN compact general models, BSD-3-Clause (`models/LICENSE-Real-ESRGAN`) |
+| `src/vendor/ort/` | ONNX Runtime Web 1.22.0 (WebAssembly build), MIT, © Microsoft Corporation (`src/vendor/ort/LICENSE`) |
+| `models/inpaint-migan.onnx` | MI-GAN inpainting (Picsart AI Research), MIT (`models/LICENSE-MI-GAN`) |
 | `src/vendor/nsfw/` | TensorFlow.js 4.22.0, Apache-2.0; NSFWJS 4.3.0 model, MIT (see `src/vendor/nsfw/README.md`) |
 | `src/fonts/` | Geist, Geist Mono, Antonio and Instrument Serif, SIL Open Font License 1.1 (`src/fonts/OFL.txt`) |
 

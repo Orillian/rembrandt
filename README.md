@@ -88,8 +88,10 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **RAW** from 1,000+ cameras, developed on the GPU: tone, colour, curves, grading, dehaze, detail.
 - **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth, and
   People: face skin, body skin, hair, eyebrows, eye whites, irises, lips, teeth and clothes.
-- **Remove**: heal and clone spots and strokes; Rembrandt picks a matching source for you. **Remove
-  blemishes** finds and heals them on portraits in one click and keeps moles and beauty marks.
+- **Remove**: paint over anything and **Generative Remove** fills it with what was most likely behind it
+  (a small inpainting network that runs on any computer's CPU, no upload). **People in the background**
+  finds and removes passers-by in one click and keeps your subject. Heal and Clone copy from a matching
+  part of the photo. **Remove blemishes** heals spots on portraits in one click and keeps moles and beauty marks.
 - **Edit like me**: after a few edits, Rembrandt edits a new photo the way you would. It learns from
   the photos you've edited, by what each looked like before you touched it, so a dark photo still
   gets lifted the way you like. On your device; nothing to train or upload.

@@ -49,6 +49,7 @@ import { buildEditPanel } from './panel-edit.js';
 import { buildCropPanel, CropOverlay, refitCrop } from './tool-crop.js';
 import { buildMaskPanel, MaskOverlay, activeMask, removeMask, applyPick, addMask } from './tool-masks.js';
 import { retouchPasses } from './retouch.js';
+import { hooks as fillHooks } from './inpaint.js';
 import { RetouchOverlay, buildRetouchPanel, retouchState, deleteSelected, newSourceForSelected } from './tool-retouch.js';
 import { buildPresetsPanel, allPresets } from './panel-presets.js';
 import { computeHistogram, drawHistogram } from './histogram.js';
@@ -2836,6 +2837,7 @@ function boot() {
     if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; app._consistent = runConsistent; app._matchRenderer = matchRenderer; }
     if (!prefs.since) { prefs.since = Date.now(); savePrefs(); }   // for "Since you switched" in Settings
     app.engine.sourcePasses = retouchPasses;
+    fillHooks.onReady = () => { if (app.engine.L) app.engine.L.baseKey = null; app.requestRender(); };
     ai.onChange(() => { if (app.state.tool === 'ai' || app.state.tool === 'masks') app.refreshPanel(); app.requestRender(); });
   } catch (err) {
     console.error(err);

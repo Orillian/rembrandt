@@ -35,3 +35,15 @@ Format: the 4 bytes `RDN1`, then 12 layers of weights `[out][in][3][3]` and bias
 little-endian float16 (13 → 96 → … → 96 → 12 channels, ReLU between layers, on the photo
 pixel-unshuffled by 2 plus a noise-level map). KAIR is Copyright (c) 2019 Kai Zhang, under the MIT
 license (`LICENSE-KAIR`).
+
+## Generative Remove
+
+Runs on the CPU through ONNX Runtime Web (`src/vendor/ort/`, MIT), so it works on any computer.
+
+| File | Purpose | Source (MIT) |
+|---|---|---|
+| `inpaint-migan.onnx` | Generative Remove and People in the background: MI-GAN (Sargsyan et al., ICCV 2023), the full pipeline (pre- and post-processing included) | `huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx` |
+
+Inputs: `image` uint8 `[1, 3, H, W]` RGB and `mask` uint8 `[1, 1, H, W]` (0 = fill, 255 = keep); output
+`result` uint8 `[1, 3, H, W]`. MI-GAN is Copyright (c) 2024 Picsart AI Research, under the MIT license
+(`LICENSE-MI-GAN`).

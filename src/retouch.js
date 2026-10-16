@@ -12,9 +12,14 @@
 // Ported from RAWmakase (src/develop/retouch/{mod,heal,search}.rs), MIT licence,
 // © RAWmakase contributors; see NOTICE.md.
 //
-// An operation: { mode: 'heal' | 'clone', shape: 'spot' | 'brush', points: [[u, v], …] (one for a spot),
+// Generative fills (mode 'fill', inpaint.js) are spots too: they carry `fill: { key, rect, scale }`, the
+// stored patch, where it goes (UV [u0, v0, u1, v1]) and the scale it was encoded at.
+//
+// An operation: { mode: 'heal' | 'clone' | 'fill', shape: 'spot' | 'brush', points: [[u, v], …] (one for a spot),
 //   radius (fraction of the photo's long edge), feather 0–1, opacity 0–1, offset: [du, dv] }.
 // Positions are UV of the (lens-corrected) photo: u to the right, v down, 0–1.
+
+import { inpaint, patches, patchReady, savePatch } from './inpaint.js';
 
 export const MAX_OPS = 1000;
 export const MAX_POINTS = 4096;
@@ -28,7 +33,8 @@ export const pin = (op) => op.points[op.points.length - 1];
 export function valid(op) {
   const unit = (v) => Number.isFinite(v) && v >= 0 && v <= 1;
   const pos = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isFinite(v) && Math.abs(v) <= 2);
-  return op && (op.mode === 'heal' || op.mode === 'clone') && unit(op.feather) && unit(op.opacity) && pos(op.offset)
+  const fill = op?.mode !== 'fill' || (typeof op.fill?.key === 'string' && Array.isArray(op.fill.rect) && op.fill.rect.length === 4 && op.fill.rect.every((v) => Number.isFinite(v)) && op.fill.scale > 0);
+  return op && (op.mode === 'heal' || op.mode === 'clone' || op.mode === 'fill') && fill && unit(op.feather) && unit(op.opacity) && pos(op.offset)
     && Number.isFinite(op.radius) && op.radius >= 1e-4 && op.radius <= 0.5
     && Array.isArray(op.points) && op.points.length >= 1 && op.points.length <= MAX_POINTS && op.points.every(pos);
 }
@@ -171,6 +177,7 @@ export function heal(dest, source, alpha, w, h) {
 // `img`: { read(x, y, w, h) -> Float32Array RGBA, write(x, y, w, h, data), W, H }.
 // Renders one operation; the photo is only read and written where the operation reaches.
 export function applyOp(img, op) {
+  if (op.mode === 'fill') return applyFill(img, op);
   const W = img.W, H = img.H, pl = place(op, W, H);
   const rect = clip(destRect(pl), W, H);
   if (rect[2] <= rect[0] || rect[3] <= rect[1]) return;
@@ -204,6 +211,84 @@ export function applyOp(img, op) {
     if (a > 0) for (let k = 0; k < 3; k++) dest[i * 4 + k] += (patch[i * 4 + k] - dest[i * 4 + k]) * a;
   }
   img.write(grid[0], grid[1], w, h, dest);
+}
+
+// ---------------------------------------------------------------- generative fill
+
+const enc = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+const DEC = Float32Array.from({ length: 256 }, (_, i) => { const c = i / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); });
+
+// Blends a fill's stored patch into the photo (at any size: the patch is resampled).
+function applyFill(img, op) {
+  const P = patches.get(op.fill.key);
+  if (!P) return;
+  const W = img.W, H = img.H, [u0, v0, u1, v1] = op.fill.rect, sc = op.fill.scale;
+  const grid = clip([Math.floor(u0 * W), Math.floor(v0 * H), Math.ceil(u1 * W), Math.ceil(v1 * H)], W, H);
+  const w = grid[2] - grid[0], h = grid[3] - grid[1];
+  if (w <= 0 || h <= 0) return;
+  const pl = place(op, W, H), alpha = coverage(pl.points, pl.radius, pl.feather, grid);
+  const dest = img.read(grid[0], grid[1], w, h), d = P.data;
+  for (let y = 0; y < h; y++) {
+    const pv = Math.min(P.h - 1, Math.max(0, ((grid[1] + y + 0.5) / H - v0) / (v1 - v0) * P.h - 0.5));
+    const iy = Math.floor(pv), fy = pv - iy, iy1 = Math.min(P.h - 1, iy + 1);
+    for (let x = 0; x < w; x++) {
+      const a = alpha[y * w + x] * op.opacity;
+      if (a <= 0) continue;
+      const pu = Math.min(P.w - 1, Math.max(0, ((grid[0] + x + 0.5) / W - u0) / (u1 - u0) * P.w - 0.5));
+      const ix = Math.floor(pu), fx = pu - ix, ix1 = Math.min(P.w - 1, ix + 1);
+      const i = (y * w + x) * 4;
+      for (let k = 0; k < 3; k++) {
+        const t = (DEC[d[(iy * P.w + ix) * 4 + k]] * (1 - fx) + DEC[d[(iy * P.w + ix1) * 4 + k]] * fx) * (1 - fy)
+          + (DEC[d[(iy1 * P.w + ix) * 4 + k]] * (1 - fx) + DEC[d[(iy1 * P.w + ix1) * 4 + k]] * fx) * fy;
+        dest[i + k] += (t * sc - dest[i + k]) * a;
+      }
+    }
+  }
+  img.write(grid[0], grid[1], w, h, dest);
+}
+
+// Works out a new fill for `op` (a 'fill' brush or spot) on `img`, the photo as it is now: the painted
+// area and the context around it go through the inpainting network, and the result is stored.
+// Sets op.fill. The context is resampled to at most CONTEXT_PX on its long edge.
+const CONTEXT_PX = 1024;
+export async function makeFill(img, op) {
+  const W = img.W, H = img.H, pl = place(op, W, H);
+  const rect = clip(destRect(pl), W, H);
+  const rw = rect[2] - rect[0], rh = rect[3] - rect[1];
+  if (rw <= 0 || rh <= 0) throw new Error('Nothing to remove there');
+  const m = Math.max(48, Math.round(Math.max(rw, rh) * 0.75));
+  const C = clip([rect[0] - m, rect[1] - m, rect[2] + m, rect[3] + m], W, H);
+  const cw = C[2] - C[0], ch = C[3] - C[1];
+  const src = img.read(C[0], C[1], cw, ch);
+  const hole = coverage(pl.points, pl.radius + 2, Math.min(pl.feather, 0.5), C);
+  // Display-encode at a scale that keeps nearly every pixel in range (the network wants 8-bit sRGB).
+  const peaks = new Float32Array(cw * ch);
+  for (let i = 0; i < cw * ch; i++) peaks[i] = Math.max(src[i * 4], src[i * 4 + 1], src[i * 4 + 2]);
+  peaks.sort();
+  const scale = Math.max(1e-4, peaks[Math.floor(peaks.length * 0.995)]);
+  // Resampled to the working size (nearest is fine: the network works at 512 inside).
+  const k = Math.min(1, CONTEXT_PX / Math.max(cw, ch)), sw = Math.max(1, Math.round(cw * k)), sh = Math.max(1, Math.round(ch * k));
+  const rgb = new Uint8Array(sw * sh * 3), holes = new Uint8Array(sw * sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const sx = Math.min(cw - 1, Math.floor((x + 0.5) / k)), sy = Math.min(ch - 1, Math.floor((y + 0.5) / k)), i = (sy * cw + sx);
+    for (let c = 0; c < 3; c++) rgb[(y * sw + x) * 3 + c] = Math.round(255 * enc(Math.min(1, Math.max(0, src[i * 4 + c] / scale))));
+    holes[y * sw + x] = hole[i] > 0.02 ? 1 : 0;
+  }
+  const out = await inpaint(rgb, holes, sw, sh);
+  // Keep the part over the painted area.
+  const x0 = Math.floor((rect[0] - C[0]) * k), y0 = Math.floor((rect[1] - C[1]) * k);
+  const pw = Math.max(1, Math.min(sw - x0, Math.ceil(rw * k))), ph = Math.max(1, Math.min(sh - y0, Math.ceil(rh * k)));
+  const rgba = new Uint8Array(pw * ph * 4);
+  for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+    const s3 = ((y0 + y) * sw + x0 + x) * 3, d4 = (y * pw + x) * 4;
+    rgba[d4] = out[s3]; rgba[d4 + 1] = out[s3 + 1]; rgba[d4 + 2] = out[s3 + 2]; rgba[d4 + 3] = 255;
+  }
+  const key = 'fill:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  await savePatch(key, rgba, pw, ph);
+  // The patch covers exactly the pixels it was cut from.
+  const kx = pw / k, ky = ph / k;
+  op.fill = { key, rect: [rect[0] / W, rect[1] / H, (rect[0] + kx) / W, (rect[1] + ky) / H], scale };
+  return op;
 }
 
 // ---------------------------------------------------------------- automatic source
@@ -321,7 +406,8 @@ export function findSource(img, op, others = [], avoid = []) {
 
 // engine.sourcePasses for spot removal: applies p.retouch in order on the float source copy.
 export const retouchPasses = {
-  key(p) { return p.retouch?.length ? JSON.stringify(p.retouch) : ''; },
+  // A fill whose patch is still loading is left out until it arrives (inpaint.js hooks.onReady).
+  key(p) { return p.retouch?.length ? JSON.stringify(p.retouch) + p.retouch.map((o) => (o.mode === 'fill' && o.fill ? (patchReady(o.fill.key) ? 1 : 0) : '')).join('') : ''; },
   run(engine, p, target) {
     const img = imageOf(engine, target);
     for (const op of p.retouch) if (valid(op)) applyOp(img, op);

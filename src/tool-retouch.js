@@ -8,12 +8,12 @@
 import { el, svgEl } from './util.js';
 import { slider, segmented, button, toggle, section } from './ui.js';
 import { A } from './geometry.js';
-import { findSource, imageOf, radii, pin, MAX_OPS } from './retouch.js';
+import { findSource, imageOf, radii, pin, makeFill, MAX_OPS } from './retouch.js';
 import { findSpots } from './blemish.js';
-import { detectFaces } from './ai/ai.js';
+import { detectFaces, ai } from './ai/ai.js';
 
 // Tool settings shared by the overlay and the panel (new spots use them; the selected spot shows them).
-export const retouchState = { mode: 'heal', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
+export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
 
 const ops = (app) => app.params.retouch || (app.params.retouch = []);
 const aspect = (app) => app.img?.aspect || 1.5;
@@ -75,7 +75,9 @@ export class RetouchOverlay {
     const h = retouchState.hide ? null : this.hit(x, y);
     if (h) {
       S.selected = h.i; S.tried = [];
-      this.drag = { kind: h.part, start: this.uv(x, y), op: structuredClone(ops(this.app)[h.i]) };
+      // A fill stays where it was made (its patch belongs to that spot); clicking just selects it.
+      this.drag = ops(this.app)[h.i].mode === 'fill' ? null : { kind: h.part, start: this.uv(x, y), op: structuredClone(ops(this.app)[h.i]) };
+      this.app.drawOverlay();
       this.app.refreshPanel();
       return true;
     }
@@ -113,6 +115,7 @@ export class RetouchOverlay {
     if (d.kind === 'new') {
       const S = retouchState;
       const op = { mode: S.mode, shape: d.moved ? 'brush' : 'spot', points: d.moved ? d.points : [d.points[0]], radius: S.size, feather: S.feather, opacity: S.opacity, offset: [0, 0] };
+      if (op.mode === 'fill') { addFill(this.app, op); this.app.drawOverlay(); return; }
       op.offset = pickSource(this.app, op);
       ops(this.app).push(op);
       S.selected = ops(this.app).length - 1; S.tried = [];
@@ -145,12 +148,12 @@ export class RetouchOverlay {
           const d = op.points.map(([u, v], k) => { const [x, y] = this.css(u, v); return `${k ? 'L' : 'M'}${x} ${y}`; }).join('');
           g.append(svgEl('path', { d, class: 'rt-stroke', 'stroke-width': 2 * r }));
           const sd = op.points.map(([u, v], k) => { const [x, y] = this.css(u + op.offset[0], v + op.offset[1]); return `${k ? 'L' : 'M'}${x} ${y}`; }).join('');
-          if (sel) g.append(svgEl('path', { d: sd, class: 'rt-stroke src', 'stroke-width': 2 * r }));
+          if (sel && op.mode !== 'fill') g.append(svgEl('path', { d: sd, class: 'rt-stroke src', 'stroke-width': 2 * r }));
         } else {
           g.append(svgEl('circle', { cx: dx, cy: dy, r, class: 'rt-dest' }));
-          if (sel) g.append(svgEl('circle', { cx: sx, cy: sy, r, class: 'rt-src' }));
+          if (sel && op.mode !== 'fill') g.append(svgEl('circle', { cx: sx, cy: sy, r, class: 'rt-src' }));
         }
-        if (sel) g.append(svgEl('line', { x1: dx, y1: dy, x2: sx, y2: sy, class: 'rt-link' }));
+        if (sel && op.mode !== 'fill') g.append(svgEl('line', { x1: dx, y1: dy, x2: sx, y2: sy, class: 'rt-link' }));
         g.append(svgEl('circle', { cx: dx, cy: dy, r: 3.5, class: 'rt-pin' }));
         svg.append(g);
       });
@@ -177,6 +180,27 @@ export class RetouchOverlay {
 }
 
 // ---------------------------------------------------------------- actions
+
+// Generative Remove: the painted area is filled by the inpainting network (a few seconds), then
+// becomes a normal spot. Fills are made one at a time, in the order painted.
+let fillQueue = Promise.resolve();
+export const fillState = { busy: 0, error: '' };
+export function addFill(app, op, { quiet = false } = {}) {
+  fillState.busy++; fillState.error = ''; app.refreshPanel();
+  const photo = app.images[app.cur];
+  const job = fillQueue.then(async () => {
+    if (app.images[app.cur] !== photo) return null;   // moved on to another photo
+    await makeFill(sourceImage(app), op);
+    if (app.images[app.cur] !== photo) return null;
+    ops(app).push(op);
+    retouchState.selected = ops(app).length - 1;
+    app.requestRender(); app.commit();
+    return op;
+  }).catch((err) => { console.error(err); fillState.error = `Couldn’t remove that: ${err.message}`; if (!quiet) app.toast(fillState.error); return null; })
+    .finally(() => { fillState.busy--; app.refreshPanel(); app.drawOverlay(); });
+  fillQueue = job;
+  return job;
+}
 
 // A Heal spot for an automatically found spot, with its source chosen like a hand-placed one.
 function healSpot(app, img, s) {
@@ -240,6 +264,75 @@ export function deleteSelected(app) {
   return true;
 }
 
+// People in the background: every person the scene model finds, apart from the main subject (the
+// largest), is removed with a generative fill. Each becomes a normal fill spot you can delete.
+export async function removeBackgroundPeople(app) {
+  const e = app.images[app.cur];
+  const m = await ai.analyze(e, 'persons');
+  const { w, h } = m, N = w * h, on = new Uint8Array(N);
+  for (let i = 0; i < N; i++) on[i] = m.data[i] > 0.35 ? 1 : 0;
+  // Connected areas (4-neighbour flood fill).
+  const label = new Int32Array(N), comps = [];
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!on[s0] || label[s0]) continue;
+    const id = comps.length + 1, stack = [s0], c = { id, n: 0, x0: w, y0: h, x1: 0, y1: 0, px: [] };
+    label[s0] = id;
+    while (stack.length) {
+      const i = stack.pop(), x = i % w, y = (i / w) | 0;
+      c.n++; c.px.push(i); c.x0 = Math.min(c.x0, x); c.y0 = Math.min(c.y0, y); c.x1 = Math.max(c.x1, x); c.y1 = Math.max(c.y1, y);
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && on[j] && !label[j]) { label[j] = id; stack.push(j); }
+    }
+    comps.push(c);
+  }
+  comps.sort((a, b) => b.n - a.n);
+  // The subject is the largest; others count when clearly smaller and not specks.
+  const main = comps[0];
+  // …and the model is fairly sure about them (a post or a bollard can look a bit like a person).
+  const conf = (c) => c.px.reduce((t, i) => t + m.data[i], 0) / c.n;
+  const others = comps.slice(1).filter((c) => c.n < main.n * 0.6 && c.n > N * 0.0004 && conf(c) > 0.6);
+  if (!main || !others.length) return 0;
+  // A detection can be part of a person (a torso, say): the object selector, clicked at its centre,
+  // grows it to the whole figure when that stays plausibly person-sized.
+  for (const c of others) {
+    let sx = 0, sy = 0;
+    for (const i of c.px) { sx += i % w; sy += (i / w) | 0; }
+    const pt = [(sx / c.n + 0.5) / w, (sy / c.n + 0.5) / h];
+    try {
+      const o = await ai.analyze(e, 'object', pt);
+      if (o.w !== w || o.h !== h) continue;
+      const seed = Math.round(pt[1] * h - 0.5) * w + Math.round(pt[0] * w - 0.5);
+      if (!(o.data[seed] > 0.5)) continue;
+      const seen = new Uint8Array(N), stack = [seed], grown = [];
+      seen[seed] = 1;
+      while (stack.length && grown.length < c.n * 8) {
+        const i = stack.pop(), x = i % w, y = (i / w) | 0;
+        grown.push(i);
+        for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && !seen[j] && o.data[j] > 0.5) { seen[j] = 1; stack.push(j); }
+      }
+      // Accept only a figure-shaped growth: about as wide as the detection, and not swallowing the subject.
+      let gx0 = w, gx1 = 0;
+      for (const i of grown) { const x = i % w; if (x < gx0) gx0 = x; if (x > gx1) gx1 = x; }
+      const dw = c.x1 - c.x0 + 1;
+      if (!stack.length && grown.length < main.n * 0.6 && gx1 - gx0 + 1 <= dw * 1.6 + 4) {
+        const have = new Set(c.px);
+        for (const i of grown) if (!have.has(i)) { c.px.push(i); c.n++; const x = i % w, y = (i / w) | 0; c.x0 = Math.min(c.x0, x); c.y0 = Math.min(c.y0, y); c.x1 = Math.max(c.x1, x); c.y1 = Math.max(c.y1, y); }
+      }
+    } catch { /* keep the detection as it is */ }
+  }
+  // Each person as a brush: points on a grid over it, the radius covering the gaps and a margin.
+  const step = (c) => Math.max(2, Math.round(Math.sqrt(c.n / 600)));
+  for (const c of others) {
+    const st = step(c), pts = [];
+    for (const i of c.px) { const x = i % w, y = (i / w) | 0; if (x % st === 0 && y % st === 0) pts.push([(x + 0.5) / w, (y + 0.5) / h]); }
+    if (!pts.length) continue;
+    const radius = (st * 1.2 + Math.max(2, (c.y1 - c.y0) * 0.03)) / Math.max(w, h);
+    const op = { mode: 'fill', shape: 'brush', points: pts.slice(0, 4000), radius, feather: 0.3, opacity: 1, offset: [0, 0], auto: 'people' };
+    addFill(app, op, { quiet: true });
+  }
+  await fillQueue;
+  return others.length;
+}
+
 // ---------------------------------------------------------------- panel
 
 export function buildRetouchPanel(app) {
@@ -247,7 +340,14 @@ export function buildRetouchPanel(app) {
   const sel = () => ops(app)[S.selected] || null;
   // The sliders edit the selected spot, or the settings for new ones.
   const setting = (key, v) => { S[key === 'radius' ? 'size' : key] = v; const op = sel(); if (op) { op[key] = v; app.requestRender(); app.drawOverlay(); } };
-  const mode = segmented([{ value: 'heal', label: 'Heal' }, { value: 'clone', label: 'Clone' }], sel()?.mode || S.mode, (v) => { setting('mode', v); app.commit(); }, 'seg-sm');
+  // The mode is for new spots, and switches a selected heal or clone spot; a fill stays a fill.
+  const mode = segmented([{ value: 'fill', label: 'Generative' }, { value: 'heal', label: 'Heal' }, { value: 'clone', label: 'Clone' }], S.mode, (v) => {
+    S.mode = v;
+    const op = sel();
+    if (op && op.mode !== 'fill' && v !== 'fill') { op.mode = v; app.requestRender(); app.commit(); }
+    else if (op) { S.selected = -1; app.drawOverlay(); }
+    refresh();
+  }, 'seg-sm');
   const size = slider({ label: 'Size', min: 0.2, max: 20, step: 0.1, def: 2, get: () => (sel()?.radius ?? S.size) * 100, set: (v) => setting('radius', v / 100), commit: () => app.commit() });
   const feather = slider({ label: 'Feather', min: 0, max: 100, def: 50, get: () => (sel()?.feather ?? S.feather) * 100, set: (v) => setting('feather', v / 100), commit: () => app.commit() });
   const opacity = slider({ label: 'Opacity', min: 0, max: 100, def: 100, get: () => (sel()?.opacity ?? S.opacity) * 100, set: (v) => setting('opacity', v / 100), commit: () => app.commit() });
@@ -258,10 +358,12 @@ export function buildRetouchPanel(app) {
   const clear = button('Clear all', () => { app.params.retouch = []; S.selected = -1; app.requestRender(); app.commit(); refresh(); app.drawOverlay(); }, 'sm ghost');
   function refresh() {
     mode.set(sel()?.mode || S.mode);
+    feather.el.hidden = (sel()?.mode || S.mode) === 'fill';
     size.refresh(); feather.refresh(); opacity.refresh(); hide.refresh();
     const n = ops(app).length;
-    count.textContent = n ? `${n} spot${n === 1 ? '' : 's'} on this photo${sel() ? ` · spot ${S.selected + 1} selected` : ''}` : 'No spots yet.';
-    newSrc.disabled = del.disabled = !sel();
+    count.textContent = fillState.busy ? `Removing… (${fillState.busy} left)` : fillState.error || (n ? `${n} spot${n === 1 ? '' : 's'} on this photo${sel() ? ` · spot ${S.selected + 1} selected` : ''}` : 'No spots yet.');
+    del.disabled = !sel();
+    newSrc.disabled = !sel() || sel().mode === 'fill';
     clear.disabled = !n;
   }
   // Automatic blemish removal for portraits.
@@ -287,13 +389,27 @@ export function buildRetouchPanel(app) {
   hide.el.title = 'Show or hide spots (H)';
   const spots = section('Remove spots', { id: 'rt-spots', badge: { icon: 'erase', color: 'linear-gradient(135deg,#f472b6,#db2777)' } });
   spots.body.append(
-    el('p', { class: 'hint rt-intro' }, 'Click a spot to remove it, or drag to paint over a larger area. Rembrandt picks a matching source; drag the source circle to choose your own.'),
+    el('p', { class: 'hint rt-intro' }, 'Paint over anything to remove it. Generative fills it with what was most likely behind it; Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).'),
     el('div', { class: 'field' }, el('span', {}, 'Mode'), mode.el),
     size.el, feather.el, opacity.el, hide.el,
     el('div', { class: 'row-btns rt-actions' }, newSrc, del, clear),
     count);
+  const peopleNote = el('div', { class: 'hint' });
+  const people = button('Remove people in the background', async () => {
+    people.disabled = true;
+    peopleNote.textContent = 'Finding people…';
+    try {
+      const n = await removeBackgroundPeople(app);
+      peopleNote.textContent = n ? `${n} ${n === 1 ? 'person' : 'people'} removed. Each is a spot you can delete to bring them back.` : 'No one in the background to remove. The largest person is kept as the subject.';
+    } catch (err) {
+      console.error(err);
+      peopleNote.textContent = `Couldn’t run: ${err.message}`;
+    } finally { people.disabled = false; }
+  }, 'sm primary', 'person');
+  const distractions = section('Distractions', { id: 'rt-distractions', badge: { icon: 'person', color: 'linear-gradient(135deg,#60a5fa,#2563eb)' } });
+  distractions.body.append(el('div', { class: 'row-btns' }, people), peopleNote);
   const portraits = section('Portraits', { id: 'rt-portraits', badge: { icon: 'sparkle', color: 'linear-gradient(135deg,#fbbf24,#f97316)' } });
   portraits.body.append(el('div', { class: 'row-btns' }, auto), keep.el, sens.el, autoNote);
-  const root = el('div', { class: 'panel-view retouch' }, spots.el, portraits.el);
+  const root = el('div', { class: 'panel-view retouch' }, spots.el, distractions.el, portraits.el);
   return { el: root, refresh };
 }
