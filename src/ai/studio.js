@@ -67,12 +67,18 @@ uniform sampler2D uIn, uSoft, uSoftWide, uLight;
 uniform float uEnhance;
 uniform vec4 uRelight;      // near EV, far EV, boundary (depth), near warmth
 uniform vec3 uSky;          // deepen, warmth, saturation
+uniform vec4 uSkyRep;       // on, amount, relight, cloud cover
+uniform vec3 uSkyZen, uSkyHor, uSkyCloud;
+uniform float uAspect;
 uniform vec4 uAtmos;        // amount, warmth, lift, density curve
 uniform vec4 uRays;         // amount, sun x, sun y, length
 uniform float uRayWarm;
 uniform float uSkin;
 in vec2 vUv; out vec4 o;
 
+float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * vn(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
 vec3 warm(vec3 c, float w) { return c * vec3(1.0 + 0.18 * w, 1.0 + 0.02 * w, 1.0 - 0.2 * w); }
 vec3 saturate3(vec3 c, float s) { float Y = lum(c); return max(vec3(0.0), Y + (c - Y) * s); }
 
@@ -121,6 +127,27 @@ void main() {
       if (uSky.y != 0.0) k = warm(k, uSky.y * m);
       c = k;
     }
+  }
+
+  // Sky replacement: a new sky where the photo's sky is, at its brightness; the rest of the scene
+  // takes a little of the new light's colour (Relight).
+  if (uSkyRep.x > 0.5) {
+    float Yw = exp2(textureLod(uSoftWide, vUv, 0.0).a);
+    // The sky area from depth is coarse around thin things; keep only pixels that look like the sky
+    // around them: much darker (towers, branches against it) or much brighter (a lit rocket) stay.
+    float rY = lum(c) / max(Yw, 1e-5);
+    float m = skyAt(vUv, c) * smoothstep(0.45, 0.8, rY) * (1.0 - smoothstep(1.5, 2.4, rY));
+    float t = smoothstep(0.0, 1.0, clamp(vUv.y / 0.65, 0.0, 1.0));
+    vec3 col = mix(uSkyZen, uSkyHor, t);
+    if (uSkyRep.w > 0.0) {
+      vec2 q = vec2(vUv.x * uAspect * 2.2, vUv.y * 5.5);
+      float cl = smoothstep(0.48, 0.78, fbm(q + vec2(fbm(q * 0.5) * 1.5, 0.0)));
+      col = mix(col, uSkyCloud * (0.85 + 0.3 * fbm(q * 3.0)), cl * uSkyRep.w * (0.4 + 0.6 * t));
+    }
+    col *= max(Yw, 1e-4) / max(lum(col), 1e-4) * mix(0.85, 1.0, t);
+    vec3 tint = uSkyHor / max(lum(uSkyHor), 1e-4);
+    c = mix(c, c * tint, uSkyRep.z * 0.35 * (1.0 - m));
+    c = mix(c, col, m * uSkyRep.y);
   }
 
   // Atmosphere: haze that thickens with distance.
@@ -187,9 +214,47 @@ const progs = (engine) => {
 };
 
 const S = (p) => p.ai || {};
+// Replacement skies, made in the shader (no images to ship): zenith and horizon colour, cloud colour
+// and cover. Colours are relative; the new sky takes the brightness of the photo's own sky.
+export const SKIES = {
+  clear: ['Clear', [0.16, 0.34, 0.85], [0.66, 0.8, 1.0], [1, 1, 1], 0],
+  blue: ['Blue with clouds', [0.16, 0.34, 0.85], [0.66, 0.8, 1.0], [1, 1, 1], 0.55],
+  golden: ['Golden hour', [0.3, 0.45, 0.85], [1.0, 0.74, 0.45], [1.0, 0.86, 0.7], 0.45],
+  sunset: ['Sunset', [0.22, 0.18, 0.48], [1.0, 0.45, 0.16], [1.0, 0.58, 0.42], 0.5],
+  dusk: ['Dusk', [0.05, 0.08, 0.26], [0.56, 0.36, 0.6], [0.5, 0.42, 0.62], 0.3],
+};
+// Whether a photo has a sky to replace: the far area in the top part of the photo (depth map,
+// `sample` pixels) must be mostly smooth and sky-coloured (blue, or bright and neutral), run along the
+// top edge (dusk skies count: no brightness rule). A facade, a wall or a blurred background that
+// the depth map calls far isn't a sky.
+export function skyScore(sample, depth) {
+  const { w, h, data: d } = sample, n = w * h;
+  const L = (i) => 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+  let all = 0;
+  for (let i = 0; i < n; i++) all += L(i);
+  let cand = 0, skylike = 0, skyL = 0, top = 0, topSky = 0;
+  for (let y = 1; y < Math.round(h * 0.6); y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    const dx = Math.min(depth.w - 1, Math.floor(x / w * depth.w)), dy = Math.min(depth.h - 1, Math.floor(y / h * depth.h));
+    const isTop = y < h * 0.06;
+    if (isTop) top++;
+    if (depth.data[dy * depth.w + dx] > 0.15) continue;   // not far
+    cand++;
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2], l = L(i);
+    const grad = Math.abs(l - L(i - 1)) + Math.abs(l - L(i + 1)) + Math.abs(l - L(i - w)) + Math.abs(l - L(i + w));
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const blue = b >= r && b >= g * 0.92, neutral = l > 150 && mx - mn < 28;
+    if (grad < 18 && (blue || neutral)) { skylike++; skyL += l; if (isTop) topSky++; }
+  }
+  return { area: cand / n, score: cand ? skylike / cand : 0, top: top ? topSky / top : 0, bright: skylike ? (skyL / skylike) / (all / n) : 0 };
+}
+export const hasSky = (s) => s.area > 0.06 && s.score > 0.6 && s.top > 0.35;
+
+const skyRep = (a) => a.sky?.replace && SKIES[a.sky.replace] && (a.sky.amount ?? 100) > 0;
+
 export function studioActive(p) {
   const a = S(p);
-  return (a.enhance?.amount > 0) || (a.skin?.amount > 0) || (a.sky && (a.sky.deepen || a.sky.warmth || a.sky.saturation))
+  return skyRep(a) || (a.enhance?.amount > 0) || (a.skin?.amount > 0) || (a.sky && (a.sky.deepen || a.sky.warmth || a.sky.saturation))
     || (a.relight && (a.relight.near || a.relight.far || a.relight.warmth)) || (a.atmos?.amount > 0) || (a.rays?.amount > 0);
 }
 export const motionActive = (p) => S(p).motion?.amount > 0;
@@ -212,7 +277,7 @@ export const studioPass = {
       engine.blur(t, s, Math.max(1.5, 0.0035 * Math.max(L.qw, L.qh)));
       u.uSoft = t.tex;
     }
-    if (a.enhance?.amount > 0 || a.atmos?.amount > 0) {
+    if (a.enhance?.amount > 0 || a.atmos?.amount > 0 || skyRep(a)) {
       const t = engine.tgt('stWide'), s = engine.tgt('stWide2');
       engine.draw(P.prep, { ...u, uMode: 0 }, t);
       engine.blur(t, s, Math.max(3, 0.02 * Math.max(L.qw, L.qh)));
@@ -233,6 +298,9 @@ export const studioPass = {
       uRays: [(ray.amount || 0) / 100, ray.x ?? 0.72, ray.y ?? 0.18, 0.2 + (ray.length ?? 50) / 125],
       uRayWarm: (ray.warmth ?? 40) / 100,
       uSkin: (a.skin?.amount || 0) / 100,
+      uSkyRep: skyRep(a) ? [1, (a.sky.amount ?? 100) / 100, (a.sky.relight ?? 50) / 100, SKIES[a.sky.replace][4]] : [0, 0, 0, 0],
+      uSkyZen: skyRep(a) ? SKIES[a.sky.replace][1] : [0, 0, 0], uSkyHor: skyRep(a) ? SKIES[a.sky.replace][2] : [0, 0, 0], uSkyCloud: skyRep(a) ? SKIES[a.sky.replace][3] : [0, 0, 0],
+      uAspect: L.w / L.h,
     });
     if (!L.T.studioOut) L.T.studioOut = engine.target(L.w, L.h, { mip: input.mip });
     engine.draw(P.main, u, L.T.studioOut);

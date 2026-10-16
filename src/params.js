@@ -47,7 +47,7 @@ export function defaultParams(aspect = 1.5) {
       blur: { amount: 0, focus: -1, range: 12, bokeh: 0, protect: true, sharpen: 0, blades: 0, catseye: 0 },
       enhance: { amount: 0 },
       relight: { near: 0, far: 0, boundary: 50, warmth: 0 },
-      sky: { deepen: 0, warmth: 0, saturation: 0 },
+      sky: { deepen: 0, warmth: 0, saturation: 0, replace: 'none', amount: 100, relight: 50 },
       atmos: { amount: 0, warmth: 0, lift: 30, depth: 50 },
       rays: { amount: 0, x: 0.72, y: 0.18, length: 50, warmth: 40 },
       skin: { amount: 0 },

@@ -382,6 +382,14 @@ const app = {
 
   editLikeMe(ids) { return editLikeMe(ids || [this.images[this.cur]?.id].filter(Boolean)); },
   importCube: () => importCube(),
+  // Sky replacement checks there's a sky first (studio.js skyScore), on the depth map and the sample.
+  async photoHasSky() {
+    const e = this.images[this.cur];
+    if (!e?.sample) return false;
+    const { ai } = await import('./ai/ai.js'), { skyScore, hasSky } = await import('./ai/studio.js');
+    const depth = await ai.analyze(e, 'depth');
+    return hasSky(skyScore(e.sample, depth));
+  },
   userLooks: () => prefs.luts || [],
 
   autoTone() {

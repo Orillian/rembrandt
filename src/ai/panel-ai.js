@@ -1,6 +1,7 @@
 // AI panel: Enhance, Relight, Sky, Atmosphere, Sunrays, Skin, Lens Blur (with bokeh shapes), Motion,
 // Background, Super Resolution and Refocus. Everything runs on this device.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
+import { SKIES } from './studio.js';
 import { el } from '../util.js';
 import { slider, section, segmented, toggle, button, disclosure } from '../ui.js';
 import { icon } from '../icons.js';
@@ -57,6 +58,19 @@ export function buildAIPanel(app) {
     S(() => A().sky.deepen, (v) => { A().sky.deepen = v; }, 'Deepen', -100, 100, 0),
     S(() => A().sky.warmth, (v) => { A().sky.warmth = v; }, 'Golden hour', -100, 100, 0),
     S(() => A().sky.saturation, (v) => { A().sky.saturation = v; }, 'Saturation', -100, 100, 0));
+  // Replace the sky: procedural skies (studio.js SKIES), with Amount and Relight.
+  const skyChips = el('div', { class: 'chips' });
+  const paintSky = () => skyChips.replaceChildren(...[['none', 'Keep'], ...Object.entries(SKIES).map(([k, [n]]) => [k, n])].map(([k, n]) => {
+    const on = (A().sky.replace || 'none') === k;
+    return el('button', { class: 'chip' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: async () => {
+      if (k !== 'none' && !(await app.photoHasSky())) { app.toast('No sky found in this photo to replace'); return; }
+      A().sky.replace = k; app.aiEnsure(); app.requestRender(); app.commit(); paintSky();
+    } }, n);
+  }));
+  paintSky();
+  sky.body.append(el('div', { class: 'subhead' }, 'Replace the sky'), skyChips,
+    S(() => A().sky.amount ?? 100, (v) => { A().sky.amount = v; }, 'Amount', 0, 100, 100),
+    S(() => A().sky.relight ?? 50, (v) => { A().sky.relight = v; }, 'Relight scene', 0, 100, 50));
 
   // ---- atmosphere
   const atmos = sec('Atmosphere', 'atmos', 'atmos', 'drop');

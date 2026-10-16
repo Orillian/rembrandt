@@ -74,7 +74,8 @@ checks it against the published SHA-256 sums, and restarts the server.
   a language model.
 - **Edit the photo itself**: drag up or down on any part of the picture to lighten or darken that
   tone, left or right to change that colour; the sliders follow.
-- **AI looks**: Enhance, Relight, Sky, Atmosphere, Sunrays, Skin, Motion and Lens Blur with
+- **AI looks**: Enhance, Relight, Sky (deepen it, or replace it with a clear, cloudy, golden-hour,
+  sunset or dusk sky that relights the scene), Atmosphere, Sunrays, Skin, Motion and Lens Blur with
   aperture shapes, from on-device depth and subject maps.
 - **Refocus**: brings back detail in out-of-focus photos, even heavy defocus (regularised
   deconvolution on the GPU), on the subject or the whole picture.
