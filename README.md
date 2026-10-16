@@ -124,7 +124,8 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Bring your photos**: folders, Lightroom Classic (edits, keywords, labels, virtual copies,
   collections, with a report of anything that can't come over) and Lightroom, Google Photos, Google Drive,
   Dropbox, OneDrive ([setup](docs/cloud-services.md)). Export back to them too.
-- **Open formats**: edits are standard XMP, readable by Lightroom and others. Export to JPEG, PNG, WebP
+- **Open formats**: edits are standard XMP, readable by Lightroom and others. Export to JPEG (optionally
+  **HDR**: an Ultra HDR JPEG whose highlights shine on HDR screens and look normal everywhere else), PNG, WebP
   or TIFF, with an optional watermark; exports keep the camera details and date taken, add your name
   and copyright, and embed an sRGB profile; location is never written.
 

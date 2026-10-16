@@ -5,6 +5,7 @@ import { el, clamp } from './util.js';
 import { segmented, slider, popMenu } from './ui.js';
 import { withRecipe, recipeOf } from './recipe.js';
 import { withMetadata, srgbProfile } from './exif.js';
+import { HEADROOM, gainMap, ultraHdr } from './hdr.js';
 import { prefs, savePrefs } from './account.js';
 import { beforeAfterPage } from './beforeafter.js';
 import { recordReplay, replaySupported } from './replay.js';
@@ -156,7 +157,7 @@ export async function renderPixels(app, { long = 0 } = {}, p = app.params, mats 
 }
 
 // Renders `p` (default: the photo being edited) with the engine's current image.
-export async function renderExport(app, { format, quality, long, recipe, meta, tiffBits }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+export async function renderExport(app, { format, quality, long, recipe, meta, tiffBits, hdr }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
   if (format === 'tiff' && tiffBits !== 8) return renderTiff16(app, long, p, mats);
   const { image, outW, outH } = await renderPixels(app, { long }, p, mats);
   let canvas = el('canvas', { width: image.width, height: image.height });
@@ -171,6 +172,16 @@ export async function renderExport(app, { format, quality, long, recipe, meta, t
   const by = { artist: (prefs.artist || '').trim(), copyright: (prefs.copyright || '').trim() };
   blob = await withMetadata(blob, { meta: meta === undefined ? app.images?.[app.cur]?.meta : meta, ...by, exif: prefs.exportExif !== false, w: canvas.width, h: canvas.height });
   if (recipe) blob = await withRecipe(blob, recipeOf(p), canvas.width, canvas.height);
+  // HDR (JPEG): the same edit HEADROOM stops darker gives the highlights' detail for the gain map.
+  if (hdr && format === 'jpeg') {
+    const dark = (await renderPixels(app, { long }, { ...p, exposure: (p.exposure || 0) - HEADROOM }, mats)).image;
+    const g = gainMap(image.data, dark.data, image.width, image.height);
+    const gc = el('canvas', { width: g.w, height: g.h }), id = new ImageData(g.w, g.h);
+    for (let i = 0; i < g.data.length; i++) { const v = g.data[i]; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; id.data[i * 4 + 3] = 255; }
+    gc.getContext('2d').putImageData(id, 0, 0);
+    const gj = await new Promise((r) => gc.toBlob(r, 'image/jpeg', 0.9));
+    blob = new Blob([ultraHdr(new Uint8Array(await blob.arrayBuffer()), new Uint8Array(await gj.arrayBuffer()))], { type: 'image/jpeg' });
+  }
   return { blob, w: canvas.width, h: canvas.height };
 }
 
@@ -198,7 +209,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
     }
     const special = opts.format === 'compare' || opts.format === 'replay';
     // A chip names a choice made in the ⋯ menu, so it's never hidden state.
-    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : '', opts.format === 'tiff' ? `${opts.tiffBits === 8 ? 8 : 16}-bit` : ''].filter(Boolean).join(' · ');
+    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : '', opts.format === 'tiff' ? `${opts.tiffBits === 8 ? 8 : 16}-bit` : '', opts.format === 'jpeg' && opts.hdr ? 'HDR' : ''].filter(Boolean).join(' · ');
     chip.hidden = !chip.textContent;
     q.el.style.display = opts.format === 'png' || opts.format === 'tiff' || special ? 'none' : '';
     size.el.closest('.field').style.display = opts.format === 'replay' ? 'none' : '';
@@ -217,6 +228,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
       { sep: true },
     ]),
     opts.format === 'tiff' ? { label: '16 bits per channel', checked: opts.tiffBits !== 8, onClick: () => { opts.tiffBits = opts.tiffBits === 8 ? 16 : 8; update(); } } : null,
+    opts.format === 'jpeg' ? { label: 'HDR (brighter highlights on HDR screens)', checked: !!opts.hdr, onClick: () => { opts.hdr = !opts.hdr; update(); } } : null,
     { label: 'Include how it was edited', checked: !!opts.recipe, onClick: () => { opts.recipe = !opts.recipe; update(); } },
     { label: watermarkText() ? `Watermark “${watermarkText()}”` : 'Watermark (set it up in Settings)', checked: !!prefs.watermark?.on, onClick: () => {
       if (!watermarkText()) { status.textContent = 'Add your name, copyright or a watermark text in Settings › Preferences › Export first.'; return; }
