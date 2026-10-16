@@ -90,6 +90,13 @@ checks it against the published SHA-256 sums, and restarts the server.
   People: face skin, body skin, hair, eyebrows, eye whites, irises, lips, teeth and clothes.
 - **Remove**: heal and clone spots and strokes; Rembrandt picks a matching source for you. **Remove
   blemishes** finds and heals them on portraits in one click and keeps moles and beauty marks.
+- **Edit like me**: after a few edits, Rembrandt edits a new photo the way you would. It learns from
+  the photos you've edited, by what each looked like before you touched it, so a dark photo still
+  gets lifted the way you like. On your device; nothing to train or upload.
+- **Make these consistent**: select a shoot, pick a hero frame, and every other frame's exposure and
+  white balance are matched to it by measuring the results, keeping the rest of each photo's edits.
+- **Match my camera**: every RAW carries the JPEG the camera made from it. Rembrandt learns your
+  camera's own colour and tone from those JPEGs, per camera model, and applies it with one switch.
 - **Pick the best**: select a shoot and Rembrandt groups the bursts, picks the sharpest frame with
   open eyes in each and rejects the blurry and eyes-closed ones. Your own flags are kept; one Undo.
   **Compare** (C) shows 2–4 frames side by side with zoom and pan linked.
@@ -147,8 +154,9 @@ checks it against the published SHA-256 sums, and restarts the server.
   and an MCP server for AI agents. By [its own status table](https://github.com/storytold/lightcraft#feature-status),
   its AI masks and denoise are still classical heuristics or in progress and Super Resolution isn't
   started; some CR3, Olympus and Nikon HE RAWs don't decode yet. Rembrandt's on-device AI (People and
-  subject masks, AI Denoise, Super Resolution, Refocus, blemish removal, culling by focus and eyes)
-  and LibRaw's 1,000+ cameras are where it differs most.
+  subject masks, AI Denoise, Super Resolution, Refocus, blemish removal, culling by focus and eyes),
+  the features that learn from you (Edit like me, Match my camera, Make these consistent) and
+  LibRaw's 1,000+ cameras are where it differs most.
 - **RawTherapee / ART**: similar ground to darktable; Rembrandt trades depth of control for speed of use.
 - **GIMP / Photoshop**: different kind of tool. Those are pixel editors for compositing and painting;
   Rembrandt is a non-destructive RAW developer and library, like Lightroom.
