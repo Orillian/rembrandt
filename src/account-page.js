@@ -26,21 +26,21 @@ import { buySubscription, syncStoreSubscriptions, manageStoreSubscription, loadS
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const SECTIONS = [
   ...(isMobileApp ? [['unlock', 'Unlock', 'sparkle']] : []),
-  ['cloud', 'Cloud sync', 'cloud'],
+  ...(backendConfigured() ? [['cloud', 'Cloud sync', 'cloud']] : []),
   ['prefs', 'Preferences', 'gear'],
   ['storage', 'Storage', 'laptop'],
   ['sharing', 'Sharing', 'link'],
   ['data', 'Data & privacy', 'shield'],
 ];
 // Older links into the page (sign-in, plan, devices) all land on Cloud sync.
-const ALIAS = { profile: 'cloud', plan: 'cloud', devices: 'cloud' };
+const ALIAS = backendConfigured() ? { profile: 'cloud', plan: 'cloud', devices: 'cloud' } : { profile: 'prefs', plan: 'prefs', devices: 'prefs', cloud: 'prefs' };
 
 export function buildAccountPage(app, hooks) {
   const root = el('section', { class: 'acct-page', id: 'accountPage' });
   const nav = el('nav', { class: 'acct-nav', 'aria-label': 'Account' });
   const body = el('div', { class: 'acct-main' });
   root.append(nav, body);
-  let current = isMobileApp && !isUnlocked() ? 'unlock' : 'cloud';
+  let current = isMobileApp && !isUnlocked() ? 'unlock' : backendConfigured() ? 'cloud' : 'prefs';
   let period = 'year';
   let pick = null;      // the Cloud sync size shown in the plan picker
   let turningOn = false;   // the user switched Cloud sync on and is signing in
@@ -459,7 +459,7 @@ export function buildAccountPage(app, hooks) {
           ...(site ? [' · ', link(`${site}/terms.html`, 'Terms of service'), ' · ', link(`${site}/privacy.html`, 'Privacy policy')] : [])),
         el('p', { class: 'hint' }, 'No ads and no tracking. AI features run on your device.'))));
     out.push(card('Support Rembrandt',
-      el('p', { class: 'lead' }, 'Rembrandt is free and stays free. If it’s useful to you, you can help keep it going: star it on GitHub, tell a friend, report bugs, or subscribe to Cloud sync.'),
+      el('p', { class: 'lead' }, 'Rembrandt is free and stays free. If it’s useful to you, you can help keep it going: star it on GitHub, tell a friend, or report bugs.'),
       el('div', { class: 'row-btns' },
         CONFIG.supportUrl ? button('Support Rembrandt', () => open(CONFIG.supportUrl), 'sm', 'heart') : null,
         button('Star on GitHub', () => open(repo), 'sm ghost', 'star'))));

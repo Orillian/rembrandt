@@ -8,8 +8,10 @@ const DEFAULTS = {
   serverUrl: undefined,               // set by rembrandt-server ('' = same origin): its photos folder
   hosted: false,                      // true only on the official website's editor: it opens for Cloud sync subscribers
 
-  // Cloud sync (optional, paid). Accounts live on a Supabase project; the anon key is public by
-  // design (row-level security protects the data). Without these, Cloud sync is simply hidden.
+  // Rembrandt Cloud (sync between devices) doesn't exist yet. Everything about it stays hidden and
+  // switched off unless a build sets `cloud: true` together with the Supabase project below (the anon
+  // key is public by design; row-level security protects the data).
+  cloud: false,
   supabaseUrl: '',          // https://<project>.supabase.co
   supabaseAnonKey: '',
   paddleClientToken: '',    // Paddle Billing client-side token (checkout on the website)
@@ -38,5 +40,5 @@ const DEFAULTS = {
 };
 
 export const CONFIG = { ...DEFAULTS, ...(globalThis.LUMEN_CONFIG || {}), prices: { ...DEFAULTS.prices, ...(globalThis.LUMEN_CONFIG?.prices || {}) } };
-export const backendConfigured = () => !!(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
+export const backendConfigured = () => !!(CONFIG.cloud === true && CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
 export const supportUrl = () => CONFIG.supportUrl || `https://github.com/${CONFIG.repo}#help-out`;

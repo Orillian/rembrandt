@@ -622,9 +622,9 @@ async function paintStorage(node) {
   }
   node.hidden = false;
   node.textContent = '';
-  const plan = !cl.signedIn ? 'Cloud sync off' : cl.plan === 'free' ? 'no Cloud plan' : planName(cl.plan);
+  const plan = !backendConfigured() ? '' : !cl.signedIn ? ' · Cloud sync off' : cl.plan === 'free' ? ' · no Cloud plan' : ` · ${planName(cl.plan)}`;
   node.append(ring([{ value: used, color: 'var(--accent)' }], total, { size: 34, stroke: 5 }),
-    el('span', { class: 'side-storage-text' }, el('b', {}, `${fmtBytes(used)} of ${fmtBytes(total)}`), el('span', {}, `${label} · ${plan}`)));
+    el('span', { class: 'side-storage-text' }, el('b', {}, `${fmtBytes(used)} of ${fmtBytes(total)}`), el('span', {}, `${label}${plan}`)));
 }
 const cropOverlay = new CropOverlay(app);
 const maskOverlay = new MaskOverlay(app);
@@ -2628,7 +2628,7 @@ const accountHooks = {
 };
 $('btnAccount').addEventListener('click', (e) => popMenu(e.currentTarget, [
   isMobileApp && !isUnlocked() ? { label: 'Unlock Rembrandt', icon: 'sparkle', onClick: () => setMode('account', 'unlock') } : null,
-  { label: `Cloud sync · ${cloud.cloud.signedIn ? 'On' : 'Off'}`, icon: 'cloud', onClick: () => setMode('account', 'cloud') },
+  backendConfigured() ? { label: `Cloud sync · ${cloud.cloud.signedIn ? 'On' : 'Off'}`, icon: 'cloud', onClick: () => setMode('account', 'cloud') } : null,
   { label: 'Preferences', icon: 'gear', onClick: () => setMode('account', 'prefs') },
   { label: 'Storage', icon: 'laptop', onClick: () => setMode('account', 'storage') },
   { label: updateState().available ? 'Update Rembrandt…' : 'Check for updates…', icon: 'sync', onClick: () => setMode('account', 'prefs') },

@@ -1,7 +1,7 @@
 # Privacy: the Rembrandt apps
 
 This covers the Rembrandt apps for iPhone, iPad, Android, Mac, Windows and Linux, and copies of the
-web editor you run yourself. Cloud sync, when it opens, has its own privacy policy.
+web editor you run yourself. There is no Rembrandt Cloud or sync service; nothing is sent to Rembrandt.
 
 **Rembrandt doesn't collect any data about you.** There's no account, no analytics, no advertising
 and no tracking.

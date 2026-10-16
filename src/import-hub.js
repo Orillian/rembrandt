@@ -81,7 +81,7 @@ export function openImport(app, api, page = 'home') {
         const cls = i === 0 ? 'big' : '';
         // Phone app: Drive, Dropbox and OneDrive show up in the system file picker.
         if (isMobileApp) {
-          if (!s.folder) return tile(LOGO[s.icon], s.name, 'In the web app', () => setStatus('Link Google Photos in the web app; with Cloud sync on, the photos then appear here too.'), { cls });
+          if (!s.folder) return tile(LOGO[s.icon], s.name, 'In the web app', () => setStatus('Google Photos isn’t available on phones yet. Download the photos from photos.google.com and import them.'), { cls });
           return tile(LOGO[s.icon], s.name, 'From the file picker', () => { close(); api.chooseFiles(); }, { cls });
         }
         if (desktop) {

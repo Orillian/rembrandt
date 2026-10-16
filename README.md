@@ -118,9 +118,6 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Open formats**: edits are standard XMP, readable by Lightroom and others. Export to JPEG, PNG, WebP
   or TIFF, with an optional watermark; exports keep the camera details and date taken, add your name
   and copyright, and embed an sRGB profile; location is never written.
-- **Cloud sync (optional, paid)**: turn it on in Settings to sync edits, albums and photos between
-  your computers, the web and your phone. It's the only thing that needs an account, and the only
-  thing that costs money; everything else stays free.
 
 ## Quick facts
 
@@ -131,7 +128,7 @@ checks it against the published SHA-256 sums, and restarts the server.
 | **The AI** | Selects people, faces, subjects, objects and depth for masks, removes blemishes, denoises, refocuses, upscales and picks your best shots. It all runs on your computer. |
 | **Typing or talking** | You can ask for edits in words ("warmer", "lens blur down") or by voice. It understands editing terms, not general requests. |
 | **Your photos** | Stay on your computer. Originals are never changed; edits are saved as standard XMP that Lightroom and darktable read. |
-| **Cost** | Free, no account. Only the optional Cloud sync between devices is paid. |
+| **Cost** | Free, no account. There is no Rembrandt Cloud or sync service yet. |
 | **Runs on** | macOS, Windows and Linux, or self-hosted and used in any browser. |
 | **Coming from Lightroom** | Imports your catalog (edits, keywords, collections) and your presets (.xmp and .lrtemplate). |
 | **Not here yet** | Print, Book, Slideshow and Map modules, tethered capture, plugins. |

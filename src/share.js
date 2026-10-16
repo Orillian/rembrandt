@@ -44,7 +44,7 @@ export function openShare(app, ids, { title, render, exportPhotos, signIn }) {
     linkBox.textContent = '';
     linkBox.append(el('div', { class: 'share-opt-head' }, icon('link'), el('div', {}, el('b', {}, 'Share link'), el('span', {}, 'Anyone with the link can view.'))));
     if (!backendConfigured()) {
-      linkBox.append(el('p', { class: 'hint' }, 'Links need an online account, available in the full app.'));
+      linkBox.append(el('p', { class: 'hint' }, 'Share links need Rembrandt Cloud, which doesn’t exist yet. Use the before/after page or the replay video instead.'));
       return;
     }
     if (!signedIn) {
