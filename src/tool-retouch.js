@@ -11,6 +11,7 @@ import { A } from './geometry.js';
 import { findSource, imageOf, radii, pin, makeFill, MAX_OPS } from './retouch.js';
 import { findSpots } from './blemish.js';
 import { detectFaces, ai } from './ai/ai.js';
+import { PORTRAIT, portraitAmount, setPortrait } from './portrait.js';
 
 // Tool settings shared by the overlay and the panel (new spots use them; the selected spot shows them).
 export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
@@ -337,6 +338,7 @@ export async function removeBackgroundPeople(app) {
 
 export function buildRetouchPanel(app) {
   const S = retouchState;
+  const retouch = [];   // Portrait sliders (built below; refresh reads them)
   const sel = () => ops(app)[S.selected] || null;
   // The sliders edit the selected spot, or the settings for new ones.
   const setting = (key, v) => { S[key === 'radius' ? 'size' : key] = v; const op = sel(); if (op) { op[key] = v; app.requestRender(); app.drawOverlay(); } };
@@ -360,6 +362,7 @@ export function buildRetouchPanel(app) {
     mode.set(sel()?.mode || S.mode);
     feather.el.hidden = (sel()?.mode || S.mode) === 'fill';
     size.refresh(); feather.refresh(); opacity.refresh(); hide.refresh();
+    retouch.forEach((r) => r.refresh());
     const n = ops(app).length;
     count.textContent = fillState.busy ? `Removing… (${fillState.busy} left)` : fillState.error || (n ? `${n} spot${n === 1 ? '' : 's'} on this photo${sel() ? ` · spot ${S.selected + 1} selected` : ''}` : 'No spots yet.');
     del.disabled = !sel();
@@ -409,7 +412,15 @@ export function buildRetouchPanel(app) {
   const distractions = section('Distractions', { id: 'rt-distractions', badge: { icon: 'person', color: 'linear-gradient(135deg,#60a5fa,#2563eb)' } });
   distractions.body.append(el('div', { class: 'row-btns' }, people), peopleNote);
   const portraits = section('Portraits', { id: 'rt-portraits', badge: { icon: 'sparkle', color: 'linear-gradient(135deg,#fbbf24,#f97316)' } });
-  portraits.body.append(el('div', { class: 'row-btns' }, auto), keep.el, sens.el, autoNote);
+  // Retouching sliders: each drives a People mask (portrait.js), editable later in Masks.
+  retouch.push(...Object.entries(PORTRAIT).map(([key, [label]]) => slider({
+    label, min: 0, max: 100, def: 0,
+    get: () => portraitAmount(app.params, key),
+    set: (v) => { if (setPortrait(app.params, key, v, aspect(app))) app.aiEnsure(); app.requestRender(); },
+    commit: () => app.commit(),
+  })));
+  portraits.body.append(...retouch.map((r) => r.el), el('p', { class: 'hint' }, 'Found by AI on this device. Each is a mask you can fine-tune in Masks.'),
+    el('div', { class: 'divider' }), el('div', { class: 'row-btns' }, auto), keep.el, sens.el, autoNote);
   const root = el('div', { class: 'panel-view retouch' }, spots.el, distractions.el, portraits.el);
   return { el: root, refresh };
 }

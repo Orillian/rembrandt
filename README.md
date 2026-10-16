@@ -92,6 +92,8 @@ checks it against the published SHA-256 sums, and restarts the server.
   (a small inpainting network that runs on any computer's CPU, no upload). **People in the background**
   finds and removes passers-by in one click and keeps your subject. Heal and Clone copy from a matching
   part of the photo. **Remove blemishes** heals spots on portraits in one click and keeps moles and beauty marks.
+- **Portraits**: Smooth skin, Light the face, Brighten eyes, Define irises and Whiten teeth, each one
+  slider on an AI People mask you can fine-tune in Masks.
 - **Edit like me**: after a few edits, Rembrandt edits a new photo the way you would. It learns from
   the photos you've edited, by what each looked like before you touched it, so a dark photo still
   gets lifted the way you like. On your device; nothing to train or upload.
