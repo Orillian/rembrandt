@@ -101,6 +101,26 @@ const viewer = $('viewer');
 const canvas = $('gl');
 const overlay = $('overlay');
 
+let pendingSave = null;
+const saveSoon = debounce(() => flushSave(), 400);
+function flushSave() {
+  saveSoon.cancel();
+  const job = pendingSave;
+  pendingSave = null;
+  if (!job) return;
+  const { e, params } = job;
+  e.params = params;
+  e.edited = true;
+  e.updatedAt = Date.now();
+  // Edit like me learns from what the photo looked like before you edited it.
+  const look0 = !e.look0 && e.sample ? (e.look0 = startOfPhoto(e)) : undefined;
+  catalog.updatePhoto(e.id, { params, edited: true, updatedAt: e.updatedAt, ...(look0 && { look0 }) }).catch(() => {});
+  cloud.pushPhoto(e);
+  queueSidecar(e);
+  if (app.images[app.cur] === e) saveThumb();
+  else refreshThumbs([e]);
+}
+
 const app = {
   images: [],
   cur: -1,
@@ -153,19 +173,15 @@ const app = {
     $('btnRedo').disabled = !this.history.canRedo;
   },
 
-  persist: debounce(function persist() {
+  // Saves the photo being edited, a moment after the last change. The photo is taken when the change
+  // is made (not when the save runs), and opening another photo saves at once (flushSave), so an edit
+  // can't land on the next photo or be lost by switching quickly.
+  persist() {
     const e = app.images[app.cur];
     if (!e || !app.params) return;
-    e.params = app.params;
-    e.edited = true;
-    e.updatedAt = Date.now();
-    // Edit like me learns from what the photo looked like before you edited it.
-    const look0 = !e.look0 && e.sample ? (e.look0 = startOfPhoto(e)) : undefined;
-    catalog.updatePhoto(e.id, { params: app.params, edited: true, updatedAt: e.updatedAt, ...(look0 && { look0 }) }).catch(() => {});
-    cloud.pushPhoto(e);
-    queueSidecar(e);
-    saveThumb();
-  }, 400),
+    pendingSave = { e, params: app.params };
+    saveSoon();
+  },
 
   previewSettings(s) {
     this.preview = s ? withSettings(this.params, s, this.img.aspect) : null;
@@ -1442,10 +1458,12 @@ async function applySource(e) {
 }
 
 function developRaw(e) {
-  if (!e.raw || e.linear || e.rawBusy || e.rawError || !e.file) return;
+  if (!e.raw || e.linear || e.rawBusy || e.rawError) return;
   e.rawBusy = true;
   if (app.images[app.cur] === e) $('rawBadge').hidden = false;
-  decodeRawLinear(e.file, { quality: prefs.rawQuality })
+  // The file may have been released (another photo was opened while this one loaded): read it again.
+  (e.file ? Promise.resolve(e.file) : originalFile(e).then((f) => { if (!f) throw new Error('the original isn’t on this device'); return (e.file = f); }))
+    .then((f) => decodeRawLinear(f, { quality: prefs.rawQuality }))
     .then(async (lin) => {
       e.rawBusy = false;
       e.meta = lin.meta;
@@ -1473,6 +1491,7 @@ async function select(i) {
   if (app.cur === i && app.img) return;
   const prev = app.images[app.cur];
   if (prev && app.params) prev.params = app.params;
+  flushSave();   // the previous photo's last edit, before anything switches
   app.cur = i;
   if (!e.bitmap) {
     try {
@@ -1495,6 +1514,8 @@ async function select(i) {
         return;
       }
       const d = await decodeFile(await readable(e.file));
+      // Opened something else meanwhile: this photo was released while it decoded; drop the result.
+      if (app.images[app.cur] !== e) { d.bitmap?.close?.(); return; }
       e.bitmap = d.bitmap;
       e.kind = d.kind;
       e.raw = !!d.raw;
@@ -1620,7 +1641,7 @@ function commitPendingDelete() {
   // The note stays until the photos are really gone (the window may close half way).
   finalizeDelete(entries).then(() => notePending(entries.map((e) => e.id), false));
 }
-addEventListener('pagehide', commitPendingDelete);
+addEventListener('pagehide', () => { flushSave(); commitPendingDelete(); });
 async function finishPendingDeletes() {
   const ids = pendingIds(), set = new Set(ids), gone = app.images.filter((e) => set.has(e.id));
   if (gone.length) {
