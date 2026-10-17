@@ -6,25 +6,36 @@
 //   face    — face landmarks
 // All maps are refined with a fast guided filter using the photo's luminance as guide, so edges
 // follow the image. Output: Float32Array in [0, 1], same size as the input bitmap.
+//
+// Where a worker can't have WebGL 2 (some Linux graphics drivers under WebKitGTK, issue #22), ai.js
+// loads this same file into the page with a <script> tag instead, after the MediaPipe bundle, and
+// calls `rembrandtAI.run` directly.
 /* global Vision */
+const inWorker = typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope;
+const HERE = inWorker ? self.location.href : document.currentScript.src;
 // MediaPipe reports usage statistics to Google (odml.pa.googleapis.com) through fetch. Rembrandt keeps
 // everything on the device, so those requests are answered here and never leave it.
 const netFetch = self.fetch.bind(self);
 self.fetch = (input, init) => (/^https:\/\/[^/]*odml\.pa\.googleapis\.com\//.test(String(input?.url ?? input))
   ? Promise.resolve(new Response('', { status: 200 })) : netFetch(input, init));
-importScripts('../vendor/mediapipe/vision_bundle.js');
+if (inWorker) importScripts('../vendor/mediapipe/vision_bundle.js');
 
-const BASE = new URL('../', self.location.href).href;
-const MODELS = new URL('../../models/', self.location.href).href;
+const BASE = new URL('../', HERE).href;
+const MODELS = new URL('../../models/', HERE).href;
 let fileset = null;
 // Each MediaPipe task gets its own WebGL canvas. MediaPipe only makes one itself when the browser
 // says it's Chrome, or Safari 17+ by version number; the Linux app's WebKitGTK says neither, and
 // MediaPipe then fails on its first GL call ("GLctx.activeTexture", issue #21).
 function glCanvas() {
-  const c = new OffscreenCanvas(1, 1);
-  if (!c.getContext('webgl2')) throw new Error('AI needs WebGL 2 in a worker, which this browser or graphics driver doesn’t provide');
+  const c = inWorker ? new OffscreenCanvas(1, 1) : Object.assign(document.createElement('canvas'), { width: 1, height: 1 });
+  if (!c.getContext('webgl2')) throw new Error('AI needs WebGL 2, which this browser or graphics driver doesn’t provide');
   return c;
 }
+// Whether this worker can have WebGL 2 at all; if not, the page runs the models itself (see above).
+let workerGL;
+const hasWorkerGL = () => (workerGL ??= (() => {
+  try { return typeof OffscreenCanvas !== 'undefined' && !!new OffscreenCanvas(1, 1).getContext('webgl2'); } catch { return false; }
+})());
 const tasks = {};
 
 async function files() {
@@ -229,8 +240,11 @@ async function run(op, bitmap, point) {
   throw new Error('Unknown AI operation ' + op);
 }
 
-self.onmessage = async ({ data }) => {
+if (!inWorker) self.rembrandtAI = { run };
+else self.onmessage = async ({ data }) => {
   const { id, op, bitmap, point } = data;
+  // No WebGL 2 here: hand the photo back so the page can run it.
+  if (!hasWorkerGL()) { self.postMessage({ id, ok: false, noGL: true, bitmap }, [bitmap]); return; }
   try {
     const t0 = performance.now();
     const out = await run(op, bitmap, point);

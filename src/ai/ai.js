@@ -10,20 +10,49 @@ const ANALYSIS_LONG = 1024;
 let worker = null;
 let seq = 0;
 const waiting = new Map();
+// Set when the worker has no WebGL 2 (issue #22): the models then run in the page (see ai-worker.js).
+let inPage = null;
+const addScript = (src) => new Promise((resolve, reject) => {
+  const s = Object.assign(document.createElement('script'), { src, onload: resolve, onerror: () => reject(new Error('Couldn’t load the AI models')) });
+  document.head.append(s);
+});
+function pageAI() {
+  return (inPage ||= (async () => {
+    await addScript(new URL('../vendor/mediapipe/vision_bundle.js', import.meta.url).href);
+    await addScript(new URL('./ai-worker.js', import.meta.url).href);
+    return self.rembrandtAI;
+  })());
+}
+async function runInPage(op, bitmap, point) {
+  try {
+    const t0 = performance.now(), { run } = await pageAI();
+    const data = await run(op, bitmap, point);
+    return { ok: true, w: bitmap.width, h: bitmap.height, data, ms: Math.round(performance.now() - t0) };
+  } finally { bitmap.close?.(); }
+}
+
 function call(op, bitmap, point) {
+  if (inPage) return runInPage(op, bitmap, point);
   if (!worker) {
     worker = new Worker(new URL('./ai-worker.js', import.meta.url));
     worker.onmessage = ({ data }) => {
       const w = waiting.get(data.id);
       if (!w) return;
       waiting.delete(data.id);
+      if (data.noGL) {
+        // The worker gave the photo back; from now on everything runs here.
+        pageAI();
+        if (!waiting.size) { worker?.terminate(); worker = null; }
+        runInPage(w.op, data.bitmap, w.point).then(w.resolve, w.reject);
+        return;
+      }
       data.ok ? w.resolve(data) : w.reject(new Error(data.error));
     };
     worker.onerror = (e) => { for (const w of waiting.values()) w.reject(new Error(e.message || 'AI worker failed')); waiting.clear(); worker = null; };
   }
   const id = ++seq;
   return new Promise((resolve, reject) => {
-    waiting.set(id, { resolve, reject });
+    waiting.set(id, { resolve, reject, op, point });
     worker.postMessage({ id, op, bitmap, point }, [bitmap]);
   });
 }
