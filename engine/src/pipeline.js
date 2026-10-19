@@ -7,7 +7,7 @@
 // sharpen {amount,radius,masking}, nr {luma,chroma}, vignette {amount,midpoint,roundness,feather},
 // grain {amount,size,roughness}, curve {master,r,g,b: [[x,y],…]}.
 
-import { whiteBalance, toGL, hueToOkDir, toneK, REF_CONTRAST } from './color.js';
+import { whiteBalance, toGL, hueToOkDir, toneK, REF_CONTRAST, SCENE_CONTRAST, sceneWhiteGain } from './color.js';
 
 export const INPUT_UNIFORMS = { uInC: REF_CONTRAST, uInK: toneK(REF_CONTRAST) };
 
@@ -67,17 +67,19 @@ export function mainUniforms(p) {
 // ------------------------------------------------------------------ FINAL
 
 export function finalUniforms(p, fullW, fullH, workH, sceneSource) {
-  const c = REF_CONTRAST * 2 ** ((p.contrast / 100) * 0.6);
+  const c = (sceneSource ? SCENE_CONTRAST : REF_CONTRAST) * 2 ** ((p.contrast / 100) * 0.6);
   const ws = workH / fullH;
   return {
     uTC: c,
     uTK: toneK(c),
+    uTW: sceneSource ? sceneWhiteGain(c) : 1,
     // Scene-referred sources get the hue-preserving highlight path; display-referred sources use the
     // exact per-channel inverse, so an untouched JPEG round-trips unchanged.
     uPathToWhite: sceneSource ? 1 : 0,
     uSharp: [p.sharpen.amount / 100, Math.max(0.6, p.sharpen.radius * ws)],
     uSharpMask: p.sharpen.masking / 100,
     uNR: [p.nr.luma / 100, p.nr.chroma / 100],
+    uSpeckle: (p.nr.speckle || 0) / 100,
     uVig: [p.vignette.amount / 100, p.vignette.midpoint / 100, p.vignette.roundness / 100, p.vignette.feather / 100],
     uGrain: [p.grain.amount / 100, (0.5 + (p.grain.size / 100) * 3.5) * Math.max(1, fullH / 4000), p.grain.roughness / 100],
     uFullSize: [fullW, fullH],

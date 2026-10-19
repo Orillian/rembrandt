@@ -527,7 +527,10 @@ const app = {
 
     // Switch to the full-resolution level when zoomed past the preview's detail.
     const prevH = E.levelSize('preview').h;
-    const want = E.hasFullLevel() && v.scale > prevH * 1.1 ? 'full' : v.scale < prevH * 0.95 ? 'preview' : E.L.kind;
+    let want = E.hasFullLevel() && v.scale > prevH * 1.1 ? 'full' : v.scale < prevH * 0.95 ? 'preview' : E.L.kind === 'drag' ? 'preview' : E.L.kind;
+    // While a slider moves, the half-size level (see Engine.useLevel); not when zoomed in to check detail.
+    if (want === 'preview' && t.sliding && !compare) want = 'drag';
+    if (v.scale > prevH * 1.1 && this.images[this.cur]?.linear?.half) fullDevelop(this.images[this.cur]);
     if (want !== E.L.kind) E.useLevel(want).then(() => this.requestRender());
 
     const overlayId = t.tool === 'masks' && t.showOverlay && !t.sliding && !t.before ? t.activeMaskId : null;
@@ -1317,7 +1320,11 @@ function watchDialog(f) {
 // A readable copy of a file. Safari can return files from IndexedDB that fail when decoded; reading
 // the bytes up front turns that into a clear NotReadableError.
 async function readable(file) {
-  try { return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified }); } catch (err) {
+  try {
+    const bytes = await file.arrayBuffer();
+    // The bytes ride along: reading a large File again can take as long as reading storage.
+    return Object.assign(new File([bytes], file.name, { type: file.type, lastModified: file.lastModified }), { bytes });
+  } catch (err) {
     if (err?.name === 'NotReadableError' || err?.name === 'NotFoundError') throw Object.assign(new Error(err.message), { name: 'NotReadableError' });
     throw err;
   }
@@ -1333,7 +1340,7 @@ async function originalFile(e) {
 const CAM_PHOTOS = 12;
 app.cameraMatch = {
   key: () => app.engine?.camKey || null,
-  info: () => prefs.cameraLooks?.[app.engine?.camKey] || null,
+  info: () => camLook(app.engine?.camKey),
   busy: false,
   async learn() {
     const key = app.engine?.camKey, cur = app.images[app.cur];
@@ -1353,7 +1360,7 @@ app.cameraMatch = {
       // holds still), exactly as the editor would show it.
       app._borrowed = true;
       const render = async (file) => {
-        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1 });
+        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1, background: true });
         if (cameraKey(lin.meta) !== key) return null;
         engineDirty = true;
         await app.engine.setImage({ kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain }, computeStats({ data: lin.preview.data, w: lin.preview.w, h: lin.preview.h }));
@@ -1364,7 +1371,7 @@ app.cameraMatch = {
       };
       const r = await learnCamera(files, { render, decodeFile });
       if (!r) { app.toast('Not enough to learn from: these RAWs have no full-size camera JPEG inside'); return; }
-      prefs.cameraLooks = { ...prefs.cameraLooks, [key]: { ...r, at: Date.now() } };
+      prefs.cameraLooks = { ...prefs.cameraLooks, [key]: { ...r, at: Date.now(), base: RAW_BASE } };
       savePrefs();
       app.set('cameraLook', true); app.commit();
       const gain = Math.round((1 - r.err[1] / r.err[0]) * 100);
@@ -1376,22 +1383,35 @@ app.cameraMatch = {
   },
 };
 
+// A learned camera look corrects Rembrandt's own RAW rendering, so it only applies to the rendering it
+// was learned on; RAW_BASE changes with that rendering (0.3.16: the RGB tone curve) and older looks
+// are then learned again.
+const RAW_BASE = 2;
+const camLook = (key) => { const l = key && prefs.cameraLooks?.[key]; return l && (l.base || 1) === RAW_BASE ? l : null; };
+
 function releaseBitmap(e) {
   if (app.images[app.cur] === e) return;
   if (e.bitmap) { e.bitmap.close?.(); e.bitmap = null; }
   e.linear = null; // decoded RAW data is large; it is re-developed when the photo is opened again
   e.file = null;
+  clearTimeout(e.fullTimer);
 }
 
-// Scene statistics from the small CPU sample: the airlight used by dehaze.
+// Scene statistics from the small CPU sample: the airlight used by dehaze. Worked out once per set
+// of pixels (a RAW's half- and full-size develops share theirs).
+const SRGB_LIN = Float32Array.from({ length: 256 }, (_, i) => srgbToLinear(i / 255));
+const statsCache = new WeakMap();
 function computeStats(sample) {
   const { w, h, data } = sample;
+  if (statsCache.has(data)) return statsCache.get(data);
   const n = w * h;
   const rgb = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
-    rgb.set(displayToScene([srgbToLinear(data[i * 4] / 255), srgbToLinear(data[i * 4 + 1] / 255), srgbToLinear(data[i * 4 + 2] / 255)]), i * 3);
+    rgb.set(displayToScene([SRGB_LIN[data[i * 4]], SRGB_LIN[data[i * 4 + 1]], SRGB_LIN[data[i * 4 + 2]]]), i * 3);
   }
-  return { airlight: estimateAirlight(rgb, w, h) };
+  const stats = { airlight: estimateAirlight(rgb, w, h) };
+  statsCache.set(data, stats);
+  return stats;
 }
 
 const fmtShutter = (t) => (t >= 1 ? `${+t.toFixed(1)} s` : `1/${Math.round(1 / t)} s`);
@@ -1415,7 +1435,7 @@ async function applySource(e) {
   const w = lin ? lin.w : e.bitmap.width, h = lin ? lin.h : e.bitmap.height;
   e.sample = lin ? { data: lin.preview.data, w: lin.preview.w, h: lin.preview.h } : e.sample || sampleData(e.bitmap);
   // Scene statistics depend only on the pixels: kept until they change (the RAW develop arriving).
-  if (e.statsFor !== e.sample) { e.stats = computeStats(e.sample); e.statsFor = e.sample; }
+  e.stats = computeStats(e.sample);
   const aspect = w / h;
   if (app.img && app.params && Math.abs(app.img.aspect - aspect) > 1e-6) {
     // RAW and embedded preview can differ by a few pixels; keep the crop where it was.
@@ -1457,32 +1477,65 @@ async function applySource(e) {
   $('rawBadge').hidden = !e.rawBusy;
 }
 
-function developRaw(e) {
-  if (!e.raw || e.linear || e.rawBusy || e.rawError) return;
-  e.rawBusy = true;
-  if (app.images[app.cur] === e) $('rawBadge').hidden = false;
+// A RAW develops in two steps. First at half size (about a second for 24 MP), which is larger than
+// the editor works at on screen, so editing starts at once; then, a moment later and in its own
+// worker, at full size for zooming in to 100 % and for exports. Flicking through photos never starts
+// a full develop: it waits until a photo has been open for FULL_AFTER ms (or is zoomed or exported).
+const FULL_AFTER = 1500;
+function developRaw(e, { now = false } = {}) {
+  if (!e.raw || e.rawError) return;
+  if (e.linear && !e.linear.half) return;
+  const half = !e.linear;
+  if (half ? e.rawBusy : e.fullBusy || e.fullError) return;
+  if (!half && !now) {
+    clearTimeout(e.fullTimer);
+    e.fullTimer = setTimeout(() => { if (app.images[app.cur] === e) developRaw(e, { now: true }); }, FULL_AFTER);
+    return;
+  }
+  clearTimeout(e.fullTimer);
+  if (half) e.rawBusy = true; else e.fullBusy = true;
+  if (half && app.images[app.cur] === e) $('rawBadge').hidden = false;
+  const done = () => { e.fullResolve?.(); e.fullReady = e.fullResolve = null; };
   // The file may have been released (another photo was opened while this one loaded): read it again.
   (e.file ? Promise.resolve(e.file) : originalFile(e).then((f) => { if (!f) throw new Error('the original isn’t on this device'); return (e.file = f); }))
-    .then((f) => decodeRawLinear(f, { quality: prefs.rawQuality }))
+    .then((f) => decodeRawLinear(f, { quality: prefs.rawQuality, half: half ? 1 : 0, preview: half || !e.linear?.preview }))
     .then(async (lin) => {
-      e.rawBusy = false;
+      if (half) e.rawBusy = false; else e.fullBusy = false;
       e.meta = lin.meta;
-      catalog.updatePhoto(e.id, { meta: lin.meta, w: lin.w, h: lin.h });
-      if (app.images[app.cur] !== e) return;
+      if (!half) catalog.updatePhoto(e.id, { meta: lin.meta, w: lin.w, h: lin.h });
+      if (app.images[app.cur] !== e) { done(); return; }
+      // A full develop that finished first (the photo was reopened meanwhile) wins over a half one.
+      if (half && e.linear && !e.linear.half) return;
+      // The full develop skips the small preview (half a second); the half-size one's is the same.
+      if (!lin.preview) lin.preview = e.linear?.preview;
+      if (!lin.preview) { done(); return; }   // reopened meanwhile: the next full develop brings its own
       e.linear = lin;
       await applySource(e);
       app.requestRender();
-      saveThumb();
-      app.toast(`RAW developed with LibRaw in ${(lin.meta.decodeMs / 1000).toFixed(1)} s`);
+      if (half) {
+        saveThumb();
+        app.toast(`RAW developed with LibRaw in ${(lin.meta.decodeMs / 1000).toFixed(1)} s`);
+        developRaw(e, { now: !!e.fullReady });
+      } else done();
     })
     .catch((err) => {
-      e.rawBusy = false;
+      if (half) e.rawBusy = false; else e.fullBusy = false;
+      done();
+      // The full-size step failing keeps the half-size develop (exports then use it).
+      if (!half) { console.warn('full-size develop', err); e.fullError = err.message; return; }
       e.rawError = err.message;
       if (app.images[app.cur] === e) {
         $('rawBadge').hidden = true;
         app.toast(`Using the camera preview — ${err.message}`);
       }
     });
+}
+// Waits for the open photo's full-size develop (exports, 100 % zoom); starts it if needed.
+function fullDevelop(e) {
+  if (!e?.raw || e.rawError || e.fullError || (e.linear && !e.linear.half)) return Promise.resolve();
+  e.fullReady ||= new Promise((res) => { e.fullResolve = res; });
+  if (e.linear) developRaw(e, { now: true });
+  return e.fullReady;
 }
 
 async function select(i) {
@@ -1513,7 +1566,9 @@ async function select(i) {
         refreshLibrary();
         return;
       }
-      const d = await decodeFile(await readable(e.file));
+      // Read once into memory: the RAW develops that follow then don't read storage again.
+      e.file = await readable(e.file);
+      const d = await decodeFile(e.file);
       // Opened something else meanwhile: this photo was released while it decoded; drop the result.
       if (app.images[app.cur] !== e) { d.bitmap?.close?.(); return; }
       e.bitmap = d.bitmap;
@@ -2004,7 +2059,7 @@ async function matchRenderer(e) {
   if (!file) return null;
   let src, sample, aspect, camKey = null, bitmap = null;
   if (e.raw) {
-    const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1 });
+    const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1, background: true });
     src = { kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain };
     sample = { data: lin.preview.data, w: lin.preview.w, h: lin.preview.h };
     aspect = lin.w / lin.h; camKey = cameraKey(lin.meta || e.meta);
@@ -2113,7 +2168,7 @@ async function denoisePhoto(id, strength, job) {
   if (!file) throw new Error(`The original of “${e.name}” isn’t available`);
   let frame, gain = 1;
   if (e.raw) {
-    const lin = e.linear || await decodeRawLinear(file, { quality: prefs.rawQuality });
+    const lin = e.linear && !e.linear.half ? e.linear : await decodeRawLinear(file, { quality: prefs.rawQuality });
     frame = { w: lin.w, h: lin.h, data: lin.data };
     gain = lin.gain;
   } else {
@@ -2198,7 +2253,7 @@ async function runMerge(ids, kind, job) {
       if (!file) throw new Error(`The original of “${e.name}” isn’t available`);
       let frame, meta = {};
       if (e.raw || RAW_EXT.has(file.name.split(".").pop().toLowerCase())) {
-        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: kind === 'pano' ? 1 : 0 });
+        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: kind === 'pano' ? 1 : 0, background: true });
         frame = { w: lin.w, h: lin.h, data: lin.data };
         meta = lin.meta || {};
       } else {
@@ -2351,7 +2406,7 @@ let canvasBg = [0.08, 0.08, 0.09];
 // `camKey`: the camera of the photo on the engine; its learned look (Match my camera) is applied
 // when the photo has it on.
 const withCam = (eng, p) => {
-  const look = p?.cameraLook && eng.camKey && prefs.cameraLooks?.[eng.camKey]?.look;
+  const look = p?.cameraLook && camLook(eng.camKey)?.look;
   return look ? { ...p, _camLook: look } : p;
 };
 // Looks (looks.js): a built-in look's table is made the first time it's used; an imported .cube
@@ -2375,7 +2430,13 @@ class AppEngine extends Engine {
   render(p, v) { loadLook(this, p); return super.render(withCam(this, effectiveParams(p)), { bg: canvasBg, ...v }); }
   renderBefore(p, v) { return super.renderBefore(effectiveParams(p), { bg: canvasBg, ...v }); }
   readPixels(p, w, h, v) { loadLook(this, p); return super.readPixels(withCam(this, effectiveParams(p)), w, h, v); }
-  async exportPixels(p, ...rest) { await loadLook(this, p); return super.exportPixels(withCam(this, effectiveParams(p)), ...rest); }
+  async exportPixels(p, cropW, cropH, outH, ...rest) {
+    await loadLook(this, p);
+    // Larger than the on-screen level: needs the full-size develop of the open photo.
+    const e = app.images[app.cur];
+    if (!app._borrowed && e?.linear?.half && outH > this.levelSize('preview').h * cropH) await fullDevelop(e);
+    return super.exportPixels(withCam(this, effectiveParams(p)), cropW, cropH, outH, ...rest);
+  }
 }
 // Imports a .cube file as a look for every photo, and applies it to this one.
 async function importCube() {

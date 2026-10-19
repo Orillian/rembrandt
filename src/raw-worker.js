@@ -2,7 +2,7 @@
 // Output: full-resolution linear RGBA half-floats for the GPU, plus a small display-referred
 // 8-bit preview for thumbnails, picking and statistics.
 import createModule from './vendor/libraw/lumen-raw.js';
-import { toneFwd, rawLook, RAW_EV, SRGB_TO_REC2020 as A, REC2020_TO_SRGB as B } from '../engine/src/color.js';
+import { toneFwd, rawLook, RAW_EV, SCENE_CONTRAST, sceneWhiteGain, SRGB_TO_REC2020 as A, REC2020_TO_SRGB as B } from '../engine/src/color.js';
 
 let modPromise = null;
 let halfLUT = null;
@@ -31,11 +31,11 @@ function lut() {
 }
 
 // Display preview with the same transform as the GPU pipeline at default settings:
-// sRGB-linear * gain -> Rec.2020 -> RAW base look -> display curve (hue-preserving below white, per channel near it) -> sRGB.
+// sRGB-linear * gain -> Rec.2020 -> RAW base look -> RGB tone with a white point (sceneTone) -> sRGB.
 const enc = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.min(c, 1), 1 / 2.4) - 0.055);
-const TONE_MAX = 16;
+const TONE_MAX = 16, WG = sceneWhiteGain(SCENE_CONTRAST);
 const tone = new Float32Array(8192);
-for (let i = 0; i < tone.length; i++) tone[i] = toneFwd((i / (tone.length - 1)) * TONE_MAX);
+for (let i = 0; i < tone.length; i++) tone[i] = Math.min(1, toneFwd((i / (tone.length - 1)) * TONE_MAX, SCENE_CONTRAST) * WG);
 const toneAt = (v) => tone[Math.min(tone.length - 1, Math.max(0, Math.round((v / TONE_MAX) * (tone.length - 1))))];
 
 function preview(src, w, h, gain, long = 1024) {
@@ -59,13 +59,9 @@ function preview(src, w, h, gain, long = 1024) {
       const R = r * k, G = g * k, Bb = b * k;
       const s = rawLook([Math.max(0, A[0][0] * R + A[0][1] * G + A[0][2] * Bb), Math.max(0, A[1][0] * R + A[1][1] * G + A[1][2] * Bb), Math.max(0, A[2][0] * R + A[2][1] * G + A[2][2] * Bb)]);
       // Plain scalars from here on: this runs for every preview pixel.
-      let q0 = toneAt(s[0]), q1 = toneAt(s[1]), q2 = toneAt(s[2]);
-      const m = Math.max(s[0], s[1], s[2]);
-      if (m > 1e-7) {
-        const mt = toneAt(m), k = mt / m;
-        const t = Math.min(1, Math.max(0, (mt - 0.55) / 0.43)), f = t * t * (3 - 2 * t);
-        q0 = s[0] * k * (1 - f) + q0 * f; q1 = s[1] * k * (1 - f) + q1 * f; q2 = s[2] * k * (1 - f) + q2 * f;
-      }
+      const hi = Math.max(s[0], s[1], s[2]), lo = Math.min(s[0], s[1], s[2]);
+      const H = toneAt(hi), Lo = toneAt(lo), kt = hi - lo > 1e-9 ? (H - Lo) / (hi - lo) : 0;
+      const q0 = Lo + (s[0] - lo) * kt, q1 = Lo + (s[1] - lo) * kt, q2 = Lo + (s[2] - lo) * kt;
       const o = (y * pw + x) * 4;
       out[o] = enc(Math.max(0, B[0][0] * q0 + B[0][1] * q1 + B[0][2] * q2)) * 255;
       out[o + 1] = enc(Math.max(0, B[1][0] * q0 + B[1][1] * q1 + B[1][2] * q2)) * 255;
@@ -77,7 +73,8 @@ function preview(src, w, h, gain, long = 1024) {
 }
 
 self.onmessage = async ({ data: msg }) => {
-  const { id, buffer, quality = 3, half = 0 } = msg;
+  const { id, buffer, quality = 3, half = 0, preview: wantPreview = true } = msg;
+  const tIn = performance.now();
   try {
     const M = await (modPromise ||= createModule());
     const bytes = new Uint8Array(buffer);
@@ -86,16 +83,18 @@ self.onmessage = async ({ data: msg }) => {
     M.HEAPU8.set(bytes, ptr);
     const t0 = performance.now();
     const r = M._lr_decode(ptr, bytes.length, quality, half);
+    const t1 = performance.now();
     M._free(ptr);
     if (r !== 0) throw new Error(M.UTF8ToString(M._lr_error(r)));
     const w = M._lr_width(), h = M._lr_height();
     const meta = JSON.parse(M.UTF8ToString(M._lr_meta()));
     const dp = M._lr_data();
     const src = new Uint16Array(M.HEAPU8.buffer, dp, w * h * 3);
-    // Default brightening of +0.7 EV plus the camera's DNG baseline exposure.
+    // Default brightening (RAW_EV) plus the camera’s DNG baseline exposure.
     if (!(meta.baselineExposure > -20 && meta.baselineExposure < 20)) meta.baselineExposure = 0;
     const gain = 2 ** (RAW_EV + meta.baselineExposure);
-    const pv = preview(src, w, h, gain);
+    const pv = wantPreview ? preview(src, w, h, gain) : null;
+    const t2 = performance.now();
     const L = lut();
     const out = new Uint16Array(w * h * 4);
     for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
@@ -106,7 +105,8 @@ self.onmessage = async ({ data: msg }) => {
     }
     M._lr_free();
     meta.decodeMs = Math.round(performance.now() - t0);
-    self.postMessage({ id, ok: true, w, h, meta, gain, data: out, preview: pv }, [out.buffer, pv.data.buffer]);
+    meta.timing = { setup: Math.round(t0 - tIn), libraw: Math.round(t1 - t0), preview: Math.round(t2 - t1), convert: Math.round(performance.now() - t2) };
+    self.postMessage({ id, ok: true, w, h, meta, gain, data: out, preview: pv }, pv ? [out.buffer, pv.data.buffer] : [out.buffer]);
   } catch (err) {
     try { (await modPromise)?._lr_free(); } catch { /* ignore */ }
     self.postMessage({ id, ok: false, error: String(err?.message || err) });

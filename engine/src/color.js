@@ -96,14 +96,18 @@ export function hueToOkDir(deg) {
 // exposure than metering (applied as decode gain), and a hue twist that turns violet-leaning blues
 // toward cyan, as camera looks and profiles do (blue light otherwise renders purple).
 export const RAW_EV = 1.4;
+// Chroma of the base look. The RGB tone curve (sceneTone) matches Camera Raw's colourfulness on
+// charts, which runs about a quarter above the cameras' own JPEGs on real scenes; this brings RAWs to
+// a little above the camera JPEG (Sony, Canon), which is what people compare them with.
+export const RAW_CHROMA = 0.82;
 export const RAW_TWIST = { deg: 12, centre: -70, width: 40 };   // degrees of Oklab hue
 export function rawLook(rgb2020) {
   const [L, a, b] = oklab(rgb2020.map((v) => Math.max(v, 0)));
-  const C = Math.hypot(a, b);
-  if (C < 0.01) return rgb2020;
+  const C = Math.hypot(a, b) * RAW_CHROMA;
+  if (C < 0.01 * RAW_CHROMA) return fromOklab([L, a * RAW_CHROMA, b * RAW_CHROMA]).map((v) => Math.max(v, 0));
   const h = Math.atan2(b, a);
   const d = Math.min(1, Math.max(-1, ((h * 180) / Math.PI - RAW_TWIST.centre) / RAW_TWIST.width));
-  let wc = Math.min(1, (C - 0.01) / 0.05); wc = wc * wc * (3 - 2 * wc);
+  let wc = Math.min(1, (C / RAW_CHROMA - 0.01) / 0.05); wc = wc * wc * (3 - 2 * wc);
   const h2 = h - ((RAW_TWIST.deg * Math.PI) / 180) * (0.5 + 0.5 * Math.cos(d * Math.PI)) * wc;
   return fromOklab([L, C * Math.cos(h2), C * Math.sin(h2)]).map((v) => Math.max(v, 0));
 }
@@ -116,10 +120,31 @@ export function rawLook(rgb2020) {
 export const MIDDLE_GREY = 0.1845;
 export const REF_CONTRAST = 1.5;
 export const toneK = (c) => Math.pow(MIDDLE_GREY, c) * (1 / MIDDLE_GREY - 1);
-export const toneFwd = (x, c = REF_CONTRAST) => { const p = Math.pow(Math.max(x, 0), c); return p / (p + toneK(c)); };
+const K_REF = toneK(REF_CONTRAST);   // these run per pixel on the CPU: skip the pow for the usual curve
+const kOf = (c) => (c === REF_CONTRAST ? K_REF : toneK(c));
+export const toneFwd = (x, c = REF_CONTRAST) => { const p = Math.pow(Math.max(x, 0), c); return p / (p + kOf(c)); };
 export function toneInv(y, c = REF_CONTRAST) {
   const t = Math.min(Math.max(y, 0), 0.9985);
-  return Math.pow((toneK(c) * t) / (1 - t), 1 / c);
+  return Math.pow((kOf(c) * t) / (1 - t), 1 / c);
+}
+
+// Scene-referred sources (RAW) use the same curve with more contrast and a white point, so the
+// brightest highlights reach display white, and apply it to RGB as the DNG specification's RGB tone
+// does: the largest and smallest channel go through the curve, the middle one keeps its place between
+// them. That keeps hue, gives colours the saturation a contrast curve should (a ratio-preserving
+// curve washes them out), and runs bright colours to white on its own. Fitted to Camera Raw's
+// default rendering of a grey ramp (within 0.5 L RMS).
+export const SCENE_CONTRAST = 1.56;
+export const SCENE_WHITE = MIDDLE_GREY * 2 ** 3.75;   // scene value shown as display white
+export const sceneWhiteGain = (c) => 1 / toneFwd(SCENE_WHITE, c);
+export function sceneTone(rgb, c = SCENE_CONTRAST) {
+  const wg = sceneWhiteGain(c), T = (v) => Math.min(1, toneFwd(v, c) * wg);
+  const [r, g, b] = rgb.map((v) => Math.max(v, 0));
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  const H = T(hi), Lo = T(lo);
+  if (hi - lo < 1e-9) return [H, H, H];
+  const k = (H - Lo) / (hi - lo);
+  return [Lo + (r - lo) * k, Lo + (g - lo) * k, Lo + (b - lo) * k];
 }
 
 // Display-referred sRGB (linear light) -> scene-linear Rec.2020, as the GPU input stage does.

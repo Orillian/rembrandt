@@ -33,7 +33,7 @@ export function defaultParams(aspect = 1.5) {
       blending: 50, balance: 0,
     },
     sharpen: { amount: 0, radius: 1.0, masking: 0 },
-    nr: { luma: 0, chroma: 0 },
+    nr: { luma: 0, chroma: 0, speckle: 0 },
     // Lens corrections. profile: 'auto' (the camera's built-in table where Lightroom uses it), true, false.
     optics: { profile: 'auto', distortion: 100, vignetting: 100, ca: true, manualDistortion: 0, manualVignette: 0, manualMidpoint: 50, vertical: 0, horizontal: 0 },
     // Spot removal (Heal / Clone), applied to the source in order; see src/retouch.js.

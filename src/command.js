@@ -69,6 +69,7 @@ const CONTROLS = [
   [/\bsharpen(ing|ness)?\b/, 'sharpen.amount', 'Sharpen', 0, 150],
   [/\bnoise( reduction)?\b|\bdenoise\b/, 'nr.luma', 'Noise reduction', 0, 100],
   [/\bcolou?r noise\b/, 'nr.chroma', 'Color noise', 0, 100],
+  [/\b(colou?r |red )?speckles?\b|\bred (dots|spots)\b/, 'nr.speckle', 'Color speckles', 0, 100],
   [/\benhance\b/, 'ai.enhance.amount', 'Enhance', 0, 100],
   [/\b(lens |background )?blur\b|\bbokeh\b/, 'ai.blur.amount', 'Lens blur', 0, 100],
   [/\batmosphere\b|\bfog\b/, 'ai.atmos.amount', 'Atmosphere', 0, 100],

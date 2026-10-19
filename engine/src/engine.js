@@ -43,6 +43,8 @@ function resizeTo(bitmap, w, h) {
   return c;
 }
 
+const UPLOAD_TEXELS = 4 << 20;   // per slice of a RAW upload (32 MB of half floats)
+
 export class Engine {
   constructor(canvas) {
     const gl = canvas.getContext('webgl2', {
@@ -200,7 +202,8 @@ export class Engine {
 
   levelSize(kind) {
     const long = Math.max(this.fullW, this.fullH);
-    const cap = kind === 'full' ? Math.min(this.maxTex, FULL_CAP) : Math.min(this.maxTex, this.previewLong || PREVIEW_LONG);
+    const prev = Math.min(this.maxTex, this.previewLong || PREVIEW_LONG);
+    const cap = kind === 'full' ? Math.min(this.maxTex, FULL_CAP) : kind === 'drag' ? Math.round(prev / 2) : prev;
     const s = Math.min(1, cap / long);
     return { w: Math.max(1, Math.round(this.fullW * s)), h: Math.max(1, Math.round(this.fullH * s)) };
   }
@@ -214,31 +217,48 @@ export class Engine {
   //         {kind: 'linear', data: Uint16Array (RGBA half floats, linear sRGB), w, h, gain} for RAW.
   // stats:  {airlight: [r, g, b]} scene-linear Rec.2020 (see estimateAirlight), used for dehaze.
   async setImage(source, stats) {
-    this.freeLevel();
+    const seq = (this.imageSeq = (this.imageSeq || 0) + 1);
+    // Upload first, then swap, so the photo on screen stays usable while a large one arrives.
+    const tex = source.kind === 'linear' ? await this.uploadLinear(source, seq) : null;
+    if (seq !== this.imageSeq) { if (tex) this.gl.deleteTexture(tex); return; }
+    this.freeLevels();
     this.freeLinear();
     this.token++;
     if (source.kind === 'display') source = { ...source, w: source.bitmap.width, h: source.bitmap.height };
     this.source = source;
     this.bitmap = source.bitmap || null;
     this.stats = stats || {};
-    if (source.kind === 'linear') {
-      const gl = this.gl;
-      const t = gl.createTexture();
+    if (tex) this.fullLinear = tex;
+    await this.useLevel('preview');
+  }
+
+  // RAW data to a half-float texture, in slices of rows with a frame between them: a full-size 24 MP
+  // upload in one call holds the editor still for a second or more. Null if another image replaced it.
+  async uploadLinear(source, seq) {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, source.w, source.h);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    const rows = Math.max(1, Math.floor(UPLOAD_TEXELS / source.w));
+    for (let y = 0; y < source.h; y += rows) {
+      const n = Math.min(rows, source.h - y);
       gl.bindTexture(gl.TEXTURE_2D, t);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, source.w, source.h);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, source.w, source.h, gl.RGBA, gl.HALF_FLOAT, source.data);
-      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
-      this.fullLinear = t;
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, source.w, n, gl.RGBA, gl.HALF_FLOAT, source.data.subarray(y * source.w * 4, (y + n) * source.w * 4));
+      if (y + n < source.h) {
+        await new Promise((r) => setTimeout(r, 0));
+        if (seq !== this.imageSeq) { gl.deleteTexture(t); return null; }
+      }
     }
-    await this.useLevel('preview');
+    return t;
   }
 
   async setPreviewLong(v) {
     this.previewLong = v;
     if (!this.L) return;
-    const kind = this.L.kind;
-    this.freeLevel();
+    const kind = this.L.kind === 'drag' ? 'preview' : this.L.kind;
+    this.freeLevels();
     this.token++;
     await this.useLevel(kind);
   }
@@ -247,18 +267,23 @@ export class Engine {
     if (this.fullLinear) { this.gl.deleteTexture(this.fullLinear); this.fullLinear = null; }
   }
 
-  freeLevel() {
-    const L = this.L;
+  freeLevel(L = this.L) {
     if (!L) return;
     const gl = this.gl;
     if (L.ownSrc) gl.deleteTexture(L.src);
     for (const t of Object.values(L.T)) this.free(t);
-    this.L = null;
+    if (L === this.L) this.L = null;
+    if (L === this.spare) this.spare = null;
   }
+  freeLevels() { if (this.spare) this.freeLevel(this.spare); this.freeLevel(); }
 
+  // Levels: 'preview' (what the editor shows, previewLong), 'full' (zoomed in, exports) and 'drag', half
+  // the preview's size, used while a slider moves so every frame costs a quarter; on release the
+  // preview catches up. Preview and drag are kept side by side, so swapping between them is free.
   async useLevel(kind) {
     if (!this.source) return;
     if (this.L && this.L.kind === kind) return;
+    if (this.spare?.kind === kind) { [this.L, this.spare] = [this.spare, this.L]; return; }
     const { w, h } = this.levelSize(kind);
     if (this.L && this.L.w === w && this.L.h === h) { this.L.kind = kind; return; }
     if (this.pending === kind) return this.pendingPromise;
@@ -276,7 +301,8 @@ export class Engine {
 
   buildLevel(kind, img, w, h) {
     const gl = this.gl;
-    this.freeLevel();
+    const pair = (a, b) => (a === 'drag' && b === 'preview') || (a === 'preview' && b === 'drag');
+    if (this.L && pair(this.L.kind, kind)) { if (this.spare) this.freeLevel(this.spare); this.spare = this.L; this.L = null; } else this.freeLevels();
     let src, ownSrc = true;
     if (this.linear) {
       if (w === this.fullW && h === this.fullH) { src = this.fullLinear; ownSrc = false; }
@@ -304,7 +330,7 @@ export class Engine {
       kind, w, h, qw, qh, src, ownSrc,
       T: {
         pre: this.target(w, h),
-        main: this.target(w, h, { mip: kind === 'preview' }),
+        main: this.target(w, h, { mip: kind !== 'full' }),
         q1: this.target(qw, qh), q2: this.target(qw, qh),
       },
       // Guided-filter window (Gaussian sigma, quarter-res texels): ~2.5 % of the long edge.

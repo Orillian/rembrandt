@@ -64,6 +64,7 @@ export function describe(s) {
   if (s.grain?.amount) out.push(`Grain ${Math.round(s.grain.amount)}`);
   if (s.sharpen?.amount) out.push(`Sharpening ${Math.round(s.sharpen.amount)}`);
   if (s.nr?.luma || s.nr?.chroma) out.push(`Noise reduction ${Math.round(s.nr.luma || 0)} / colour ${Math.round(s.nr.chroma || 0)}`);
+  if (s.nr?.speckle) out.push(`Colour speckles ${Math.round(s.nr.speckle)}`);
   if (s.ai) for (const [k, name] of Object.entries(AI_NAMES)) {
     const a = s.ai[k];
     const amt = a && (a.amount ?? Math.max(Math.abs(a.near || 0), Math.abs(a.far || 0), Math.abs(a.deepen || 0)));

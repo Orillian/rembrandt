@@ -17,7 +17,7 @@ const KNOWN = {
   exposure: ['Exposure', -5, 5, 2], contrast: ['Contrast'], highlights: ['Highlights'], shadows: ['Shadows'], whites: ['Whites'], blacks: ['Blacks'],
   temp: ['Temperature'], tint: ['Tint'], vibrance: ['Vibrance'], saturation: ['Saturation'], texture: ['Texture'], clarity: ['Clarity'],
   dehaze: ['Dehaze'], haze: ['Haze'], 'vignette.amount': ['Vignette'], 'grain.amount': ['Grain', 0, 100], 'sharpen.amount': ['Sharpen', 0, 150],
-  'nr.luma': ['Noise reduction', 0, 100], 'nr.chroma': ['Color noise', 0, 100], 'ai.enhance.amount': ['Enhance', 0, 100], 'ai.blur.amount': ['Lens blur', 0, 100],
+  'nr.luma': ['Noise reduction', 0, 100], 'nr.chroma': ['Color noise', 0, 100], 'nr.speckle': ['Color speckles', 0, 100], 'ai.enhance.amount': ['Enhance', 0, 100], 'ai.blur.amount': ['Lens blur', 0, 100],
   'ai.atmos.amount': ['Atmosphere', 0, 100], 'ai.rays.amount': ['Sunrays', 0, 100], 'ai.skin.amount': ['Skin', 0, 100], 'ai.refocus.amount': ['Refocus', 0, 100], 'ai.sky.warmth': ['Golden sky'],
 };
 const HSL_PART = { hue: 'hue', sat: 'saturation', lum: 'luminance' };

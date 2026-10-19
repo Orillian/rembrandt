@@ -121,7 +121,7 @@ async function decodeRaw(file) {
 }
 
 async function decodeEmbedded(file) {
-  const u8 = new Uint8Array(await file.arrayBuffer());
+  const u8 = new Uint8Array(file.bytes || await file.arrayBuffer());
   const o = tiffOrientation(u8);
   const list = findJpegs(u8);
   for (const j of list.slice(0, 4)) {
@@ -139,42 +139,56 @@ async function decodeEmbedded(file) {
 
 // ------------------------------------------------------------------ LibRaw (WebAssembly)
 
-let worker = null;
+// Decoders in their own workers with their own queues ("lanes"): quick half-size develops of the photo
+// being opened (about a second) never wait behind a full-size one (several seconds, for zooming in and
+// exports) or behind background work (learning a camera, merges). Within a lane, decodes run one at a
+// time so memory stays bounded, and a decoder idle for IDLE_MS is shut down: LibRaw's WebAssembly
+// memory never shrinks, and a full-size decode grows it by hundreds of megabytes.
+const IDLE_MS = 20000;
 let seq = 0;
-const waiting = new Map();
-let queue = Promise.resolve();
-
-function rawWorker() {
-  if (worker) return worker;
-  worker = new Worker(new URL('./raw-worker.js', import.meta.url), { type: 'module' });
-  worker.onmessage = ({ data }) => {
-    const p = waiting.get(data.id);
-    if (!p) return;
-    waiting.delete(data.id);
-    data.ok ? p.resolve(data) : p.reject(new Error(data.error));
+const lanes = {};
+function lane(name) {
+  if (lanes[name]) return lanes[name];
+  const L = { worker: null, waiting: new Map(), queue: Promise.resolve(), idle: 0 };
+  L.get = () => {
+    clearTimeout(L.idle);
+    if (L.worker) return L.worker;
+    L.worker = new Worker(new URL('./raw-worker.js', import.meta.url), { type: 'module' });
+    L.worker.onmessage = ({ data }) => {
+      const p = L.waiting.get(data.id);
+      if (!p) return;
+      L.waiting.delete(data.id);
+      data.ok ? p.resolve(data) : p.reject(new Error(data.error));
+      if (!L.waiting.size) L.idle = setTimeout(() => { if (!L.waiting.size && L.worker) { L.worker.terminate(); L.worker = null; } }, IDLE_MS);
+    };
+    L.worker.onerror = (e) => {
+      for (const p of L.waiting.values()) p.reject(new Error(e.message || 'RAW decoder failed to start'));
+      L.waiting.clear();
+      L.worker = null;
+    };
+    return L.worker;
   };
-  worker.onerror = (e) => {
-    for (const p of waiting.values()) p.reject(new Error(e.message || 'RAW decoder failed to start'));
-    waiting.clear();
-    worker = null;
-  };
-  return worker;
+  return (lanes[name] = L);
 }
 
-// Full demosaic of a camera RAW with LibRaw. Resolves {w, h, data (RGBA half floats), gain, meta, preview}.
-// Decodes run one at a time so memory stays bounded.
-export function decodeRawLinear(file, { quality = 3, half = 0 } = {}) {
+// Demosaic of a camera RAW with LibRaw. Resolves {w, h, data (RGBA half floats), gain, meta, preview,
+// half}. `half: 1` decodes at half size without demosaicing (each 2 × 2 sensor block is one pixel):
+// about five times faster, and still larger than the editor's on-screen working size.
+export function decodeRawLinear(file, { quality = 3, half = 0, background = false, preview = true } = {}) {
+  const L = lane(background ? 'background' : half ? 'quick' : 'full');
   const run = async () => {
-    const buffer = await file.arrayBuffer();
-    const w = rawWorker();
+    const buffer = file.bytes ? file.bytes.slice(0) : await file.arrayBuffer();
+    const w = L.get();
     const id = ++seq;
-    return new Promise((resolve, reject) => {
-      waiting.set(id, { resolve, reject });
-      w.postMessage({ id, buffer, quality, half }, [buffer]);
+    const r = await new Promise((resolve, reject) => {
+      L.waiting.set(id, { resolve, reject });
+      w.postMessage({ id, buffer, quality, half, preview }, [buffer]);
     });
+    r.half = !!half;
+    return r;
   };
-  const p = queue.then(run, run);
-  queue = p.catch(() => {});
+  const p = L.queue.then(run, run);
+  L.queue = p.catch(() => {});
   return p;
 }
 

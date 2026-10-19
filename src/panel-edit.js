@@ -172,6 +172,7 @@ export function buildEditPanel(app) {
     el('div', { class: 'subhead' }, 'Noise reduction'),
     S('nr.luma', 'Luminance', 0, 100),
     S('nr.chroma', 'Color', 0, 100),
+    S('nr.speckle', 'Color speckles', 0, 100),
     el('div', { class: 'hint' }, 'Zoom to 100% to judge detail accurately.'),
   );
 

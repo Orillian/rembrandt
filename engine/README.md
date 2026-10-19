@@ -27,9 +27,16 @@ All processing happens in linear Rec.2020 (D65) scene light until the display tr
 6. **Colour in OkLCh** — 8-band hue/saturation/luminance mixer, vibrance, saturation, 3-way grading,
    monochrome.
 7. *(host passes — e.g. an application's local adjustments)*
-8. **Final** — edge-aware noise reduction, sharpening, display transform
-   `y = x^c / (x^c + k)` pinned at middle grey (contrast sets `c`) with a hue-preserving path to
-   white, gamut mapping by chroma reduction in OkLCh, tone curves, vignette, grain.
+8. **Final** — colour speckle removal (median of the surrounding colour), edge-aware noise
+   reduction, sharpening, display transform `y = x^c / (x^c + k)` pinned at middle grey (contrast
+   sets `c`). Scene-referred sources (RAW) use it with a white point, applied as RGB tone (as in the
+   DNG specification: the largest and smallest channel through the curve, the middle one in
+   proportion), which keeps hue and saturation and runs bright colours to white; display-referred
+   sources use the exact per-channel inverse of their input curve. Then gamut mapping by chroma
+   reduction in OkLCh, tone curves, vignette, grain.
+
+The editor works on a preview level (2560 px on the long edge by default), a half-size level while a
+slider is being dragged, and full resolution when zoomed in or exporting.
 
 ## Use
 

@@ -13,7 +13,7 @@
 //           OkLCh, curves, vignette, grain
 // Textures keep image row 0 at v = 0; only FINAL knows screen/crop geometry (3x3 matrices).
 
-import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST } from './color.js';
+import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST, RAW_CHROMA } from './color.js';
 
 // Emit a JS row-major matrix as a GLSL mat3 applied as `M * v`.
 const glmat = (m) => `mat3(${[0, 1, 2].map((c) => [0, 1, 2].map((r) => m[r][c].toFixed(9)).join(', ')).join(', ')})`;
@@ -72,15 +72,16 @@ const INPUT = `
 uniform sampler2D uSrc;
 uniform int uSrcLinear;
 uniform float uSrcGain, uInC, uInK;
-// RAW base look (see rawLook in color.js): violet-leaning blues turn toward cyan.
+// RAW base look (see rawLook in color.js): camera-JPEG colourfulness, violet-leaning blues toward cyan.
 vec3 rawLook(vec3 rgb) {
   vec3 lab = oklab(max(rgb, 0.0));
   float C = length(lab.yz);
-  if (C < 0.01) return rgb;
+  if (C < 0.01) return max(unOklab(vec3(lab.x, lab.yz * ${RAW_CHROMA.toFixed(3)})), 0.0);
   float h = atan(lab.z, lab.y);
   float d = clamp((degrees(h) - ${RAW_TWIST.centre.toFixed(1)}) / ${RAW_TWIST.width.toFixed(1)}, -1.0, 1.0);
   float wc = smoothstep(0.0, 1.0, clamp((C - 0.01) / 0.05, 0.0, 1.0));
   h -= radians(${RAW_TWIST.deg.toFixed(1)}) * (0.5 + 0.5 * cos(d * PI)) * wc;
+  C *= ${RAW_CHROMA.toFixed(3)};
   return max(unOklab(vec3(lab.x, C * cos(h), C * sin(h))), 0.0);
 }
 vec3 sceneIn(vec2 uv) {
@@ -395,7 +396,7 @@ uniform mat3 uToImage, uToCrop;
 uniform int uCropTest, uClip, uOverlay, uCurveOn, uPathToWhite;
 uniform vec3 uBg;
 uniform vec2 uInSize, uFullSize;
-uniform float uLod, uSharpMask, uCropAspect, uTC, uTK;
+uniform float uLod, uSharpMask, uCropAspect, uTC, uTK, uTW, uSpeckle;
 uniform vec2 uSharp, uNR;
 uniform vec4 uVig;
 uniform vec3 uGrain;
@@ -463,18 +464,51 @@ vec3 denoise(vec2 uv, vec2 tx, vec3 c0) {
   return mix(c0 / Y0, cs / wCs, uNR.y) * mix(Y0, Ys / wYs, uNR.x);
 }
 
-// Display transform. Per-channel curves desaturate bright colours naturally but shift hues; a
-// max-RGB curve keeps hue but never reaches white. Blend from the latter to the former as the
-// value approaches display white ("path to white").
+// Colour speckles: single pixels (or a few) whose colour doesn't belong to their surroundings, such as
+// red dots at small high-contrast points on skin in high-ISO or demosaiced detail. Colour noise
+// reduction can't touch them, as it only averages with neighbours of similar brightness. Here each
+// pixel's colour (as ratios to its luminance) is compared with the median of 3 × 3 samples around it
+// (McGuire's min/max network, per channel) and replaced by it, luminance kept, as far as it stands out.
+#define S2(a, b) { vec3 t_ = a; a = min(t_, b); b = max(t_, b); }
+#define MN3(a, b, c) S2(a, b); S2(a, c);
+#define MX3(a, b, c) S2(b, c); S2(a, c);
+vec3 despeckle(vec2 uv, vec2 tx, vec3 c0, float amt) {
+  float Y0 = max(lum(c0), 1e-5);
+  vec3 v0 = c0 / Y0, v1, v2, v3, v4, v5, v6, v7, v8;
+  // Neighbours two pixels out, so speckles of a few pixels don't prop each other up.
+  #define R(o) (at(uv + (o) * 2.0 * tx) / max(lum(at(uv + (o) * 2.0 * tx)), 1e-5))
+  v1 = R(vec2(-1.0, -1.0)); v2 = R(vec2(0.0, -1.0)); v3 = R(vec2(1.0, -1.0));
+  v4 = R(vec2(-1.0, 0.0)); v5 = R(vec2(1.0, 0.0));
+  v6 = R(vec2(-1.0, 1.0)); v7 = R(vec2(0.0, 1.0)); v8 = R(vec2(1.0, 1.0));
+  #undef R
+  vec3 a = v0, b = v1, c = v2, d = v3, e = v4, f = v5;
+  S2(a, d); S2(b, e); S2(c, f); MN3(a, b, c); MX3(d, e, f);
+  vec3 g = v6; S2(b, c); S2(d, e); MN3(b, d, g); MX3(c, e, g);
+  vec3 h = v7; S2(c, d); S2(e, h); S2(c, e); S2(d, h);
+  vec3 k = v8; MX3(d, e, k); S2(d, e);
+  vec3 med = e / max(lum(e), 1e-5);
+  // How far the pixel's colour stands out, against how much the neighbourhood itself varies.
+  float spread = (length(v1 - med) + length(v2 - med) + length(v3 - med) + length(v4 - med)
+    + length(v5 - med) + length(v6 - med) + length(v7 - med) + length(v8 - med)) / 8.0;
+  float dev = length(v0 - med) / (0.03 + spread);
+  // The amount mostly sets how far a colour must stand out; obvious speckles go fully from about 40.
+  float w = min(1.0, amt * 2.5) * smoothstep(mix(4.0, 1.6, amt), mix(8.0, 3.0, amt), dev);
+  return mix(c0, med * Y0, w);
+}
+
+// Display transform. Display-referred sources (JPEG) use the exact per-channel inverse of their input
+// curve, so an untouched JPEG round-trips unchanged. Scene-referred sources (RAW) use RGB tone as in
+// the DNG specification (see sceneTone in color.js): the largest and smallest channel through the
+// curve with a white point, the middle one in proportion, which keeps hue, gives colours the
+// saturation of a contrast curve, and runs bright colours to white.
+float sceneCurve(float x) { return min(1.0, hill(x, uTC, uTK) * uTW); }
 vec3 displayTransform(vec3 rgb) {
   rgb = max(rgb, 0.0);
-  vec3 pc = vec3(hill(rgb.r, uTC, uTK), hill(rgb.g, uTC, uTK), hill(rgb.b, uTC, uTK));
-  if (uPathToWhite == 0) return pc;
-  float m = max(rgb.r, max(rgb.g, rgb.b));
-  if (m <= 1e-7) return pc;
-  float mt = hill(m, uTC, uTK);
-  vec3 hp = rgb * (mt / m);
-  return mix(hp, pc, smoothstep(0.55, 0.98, mt));
+  if (uPathToWhite == 0) return vec3(hill(rgb.r, uTC, uTK), hill(rgb.g, uTC, uTK), hill(rgb.b, uTC, uTK));
+  float hi = max(rgb.r, max(rgb.g, rgb.b)), lo = min(rgb.r, min(rgb.g, rgb.b));
+  float H = sceneCurve(hi), L = sceneCurve(lo);
+  if (hi - lo < 1e-9) return vec3(H);
+  return L + (rgb - lo) * ((H - L) / (hi - lo));
 }
 
 // Keep lightness and hue, reduce chroma until the colour fits in sRGB (bisection in OkLCh).
@@ -497,9 +531,10 @@ vec3 gamutMap(vec3 lin, bool soft) {
     }
   }
   float Cm = lo;
-  if (soft && C > 0.8 * Cm && Cm > 0.0) {
-    // Smoothly roll chroma off above 80 % of the boundary (only for scene-referred sources).
-    float k = 0.8 * Cm, r = Cm - k;
+  if (soft && C > 0.95 * Cm && Cm > 0.0) {
+    // Smoothly roll chroma off above 95 % of the boundary (only for scene-referred sources); a lower
+    // knee visibly desaturates colours that fit (measured against Camera Raw).
+    float k = 0.95 * Cm, r = Cm - k;
     C = min(C, k + r * (1.0 - exp(-(C - k) / r)));
   } else C = min(C, Cm);
   return clamp(TO_SRGB * unOklab(vec3(L, dir * C)), 0.0, 1.0);
@@ -517,6 +552,7 @@ void main() {
   vec3 rgb = base.rgb;
   vec2 tx = exp2(uLod) / uInSize;
 
+  if (uSpeckle > 0.0) rgb = despeckle(uv, tx, rgb, uSpeckle);
   if (uNR.x > 0.0 || uNR.y > 0.0) rgb = denoise(uv, tx, rgb);
   if (uSharp.x > 0.0) {
     vec2 r = tx * uSharp.y;
