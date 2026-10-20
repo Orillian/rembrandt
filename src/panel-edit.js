@@ -2,6 +2,7 @@
 import { el, getPath, setPath } from './util.js';
 import { slider, section, segmented, iconButton, button, popMenu, toggle } from './ui.js';
 import { autoVertical } from './tool-crop.js';
+import { detectDistortion } from './lens-auto.js';
 import { curveEditor, hslMixer, gradingControl } from './widgets.js';
 import { defaultParams } from './params.js';
 import { LOOKS } from './looks.js';
@@ -194,7 +195,14 @@ export function buildEditPanel(app) {
   } });
   optics.body.append(
     profileNote, profileBox,
-    el('div', { class: 'subhead' }, 'Manual'),
+    el('div', { class: 'subhead' }, el('span', {}, 'Manual'), button('Auto', () => {
+      // Straight lines made straight, from the small copy of the photo (before lens corrections).
+      const sm = app.images[app.cur]?.sample;
+      const r = sm && detectDistortion({ width: sm.w, height: sm.h, data: sm.data });
+      if (!r) { app.toast('No clear straight lines to judge the lens by in this photo'); return; }
+      app.set('optics.manualDistortion', r.amount); app.commit(); app.refreshPanel();
+      app.toast(`Distortion ${r.amount > 0 ? '+' : ''}${r.amount}: ${r.amount > 0 ? 'barrel' : 'pincushion'} distortion corrected`);
+    }, 'sm ghost')),
     S('optics.manualDistortion', 'Distortion', -100, 100),
     S('optics.manualVignette', 'Vignetting', -100, 100),
     S('optics.manualMidpoint', 'Midpoint', 0, 100),
