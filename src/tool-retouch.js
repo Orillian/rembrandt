@@ -9,12 +9,13 @@ import { el, svgEl } from './util.js';
 import { slider, segmented, button, toggle, section } from './ui.js';
 import { A } from './geometry.js';
 import { findSource, imageOf, radii, pin, makeFill, MAX_OPS } from './retouch.js';
+import { findDust } from './dust.js';
 import { findSpots } from './blemish.js';
 import { detectFaces, ai } from './ai/ai.js';
 import { PORTRAIT, portraitAmount, setPortrait } from './portrait.js';
 
 // Tool settings shared by the overlay and the panel (new spots use them; the selected spot shows them).
-export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, spots: false, spotLevel: 50, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
+export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, spots: false, spotLevel: 50, dustSensitivity: 0.5, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
 
 const ops = (app) => app.params.retouch || (app.params.retouch = []);
 const aspect = (app) => app.img?.aspect || 1.5;
@@ -210,6 +211,26 @@ function healSpot(app, img, s) {
   ops(app).push(op);
 }
 
+// Remove all dust (dust.js): heals every dust spot found, replacing earlier dust spots on this photo.
+// Each one is an ordinary heal spot afterwards (move it, delete it, pick a new source). Resolves the count.
+export function removeDust(app) {
+  const img = sourceImage(app);
+  if (!img) return 0;
+  app.params.retouch = ops(app).filter((o) => !o.dust);
+  const spots = findDust(img.read(0, 0, img.W, img.H), img.W, img.H, { sensitivity: retouchState.dustSensitivity });
+  let n = 0;
+  for (const sp of spots) {
+    if (ops(app).length >= MAX_OPS) break;
+    const op = { mode: 'heal', shape: 'spot', points: [[sp.u, sp.v]], radius: sp.radius, feather: 0.6, opacity: 1, offset: [0, 0], dust: true };
+    op.offset = findSource(img, op, ops(app), []) || (() => { const [ru] = radii(op.radius, aspect(app)); return [sp.u > 0.7 ? -3 * ru : 3 * ru, 0]; })();
+    ops(app).push(op);
+    n++;
+  }
+  retouchState.selected = -1;
+  app.requestRender(); app.commit(); app.refreshPanel(); app.drawOverlay();
+  return n;
+}
+
 // Automatic blemish removal (blemish.js): replaces earlier automatic spots on this photo.
 // Resolves { faces, healed, kept }.
 export async function autoBlemish(app) {
@@ -358,6 +379,11 @@ export function buildRetouchPanel(app) {
   const visualize = toggle('Visualize spots', () => S.spots, (v) => { S.spots = v; spotLevel.el.hidden = !v; app.requestRender(); });
   const spotLevel = slider({ label: 'Detail', min: 1, max: 100, def: 50, get: () => S.spotLevel, set: (v) => { S.spotLevel = v; app.requestRender(); } });
   spotLevel.el.hidden = !S.spots;
+  const dust = button('Remove all dust', () => {
+    const n = removeDust(app);
+    app.toast(n ? `Healed ${n} dust spot${n === 1 ? '' : 's'}. Each is an ordinary spot: move or delete any you want to keep` : 'No dust spots found in the smooth areas of this photo');
+  }, 'sm ghost', 'erase');
+  dust.title = 'Find dust spots in smooth areas (skies, walls) and heal them all';
   const count = el('div', { class: 'hint' });
   const newSrc = button('New source', () => newSourceForSelected(app), 'sm ghost', 'swap');
   const del = button('Delete', () => deleteSelected(app), 'sm ghost', 'trash');
@@ -398,7 +424,7 @@ export function buildRetouchPanel(app) {
   spots.body.append(
     el('p', { class: 'hint rt-intro' }, 'Paint over anything to remove it. Generative fills it with what was most likely behind it; Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).'),
     el('div', { class: 'field' }, el('span', {}, 'Mode'), mode.el),
-    size.el, feather.el, opacity.el, hide.el, visualize.el, spotLevel.el,
+    size.el, feather.el, opacity.el, hide.el, visualize.el, spotLevel.el, dust,
     el('div', { class: 'row-btns rt-actions' }, newSrc, del, clear),
     count);
   const peopleNote = el('div', { class: 'hint' });
