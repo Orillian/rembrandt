@@ -38,6 +38,8 @@ export function defaultParams(aspect = 1.5) {
     optics: { profile: 'auto', distortion: 100, vignetting: 100, ca: true, manualDistortion: 0, manualVignette: 0, manualMidpoint: 50, vertical: 0, horizontal: 0 },
     // Spot removal (Heal / Clone), applied to the source in order; see src/retouch.js.
     retouch: [],
+    // Reshape: Liquify strokes and face sculpting (src/warp.js), before spot removal.
+    warp: { strokes: [], eyes: 0, face: 0, nose: 0, smile: 0, faces: null },
     // Match my camera: the camera's own colour, learned from its JPEGs (src/camera-match.js). RAWs only.
     cameraLook: false,
     // Look (looks.js): a built-in film look ('film:…') or an imported .cube ('cube:…'), on display colour.
@@ -72,6 +74,7 @@ export const GROUPS = {
   detail: ['sharpen', 'nr'],
   optics: ['optics'],
   retouch: ['retouch'],
+  warp: ['warp'],
   refocus: ['ai.refocus'],
   lens: ['ai.blur'],
   background: ['ai.bg'],
@@ -153,6 +156,8 @@ export function developSettings(p) {
   if (s.ai) { s.ai.blur.focus = -1; if (s.ai.bg.mode === 'image') s.ai.bg = { ...s.ai.bg, mode: 'none', image: null }; }
   delete s.geometry;
   delete s.masks;
+  // Reshape: the face sliders travel, Liquify strokes and the faces they were set on don't.
+  if (s.warp) s.warp = { eyes: s.warp.eyes || 0, face: s.warp.face || 0, nose: s.warp.nose || 0, smile: s.warp.smile || 0 };
   return s;
 }
 
@@ -160,6 +165,8 @@ export function withSettings(p, settings, aspect) {
   const next = deepMerge(defaultParams(aspect), settings);
   next.geometry = clone(p.geometry);
   next.masks = clone(p.masks);
+  // This photo's own strokes and faces (see developSettings).
+  next.warp = { ...next.warp, strokes: clone(p.warp?.strokes || []), faces: clone(p.warp?.faces ?? null) };
   return next;
 }
 

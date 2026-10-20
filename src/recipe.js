@@ -19,6 +19,7 @@ const unpack = (s) => JSON.parse(decodeURIComponent(escape(atob(s))));
 export function recipeOf(params) {
   const s = developSettings(params);
   delete s.retouch;
+  if (s.warp) { delete s.warp.strokes; delete s.warp.faces; }
   if (s.ai) delete s.ai.bg;
   return s;
 }

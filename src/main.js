@@ -53,6 +53,9 @@ import { hooks as fillHooks } from './inpaint.js';
 import * as clip from './ai/clip.js';
 import { LOOKS, lookTable, parseCube } from './looks.js';
 import { RetouchOverlay, buildRetouchPanel, retouchState, deleteSelected, newSourceForSelected } from './tool-retouch.js';
+import { WarpOverlay, buildWarpPanel, needsFaces, ensureFaces } from './tool-warp.js';
+import { faceShape } from './warp.js';
+import { warpPass, chainPasses } from './warp.js';
 import { buildPresetsPanel, allPresets } from './panel-presets.js';
 import { computeHistogram, drawHistogram } from './histogram.js';
 import { openExport, renderExport, renderPixels } from './export.js';
@@ -234,7 +237,7 @@ const app = {
     body.textContent = '';
     if (!this.params) { this.panel = null; return; }
     const t = this.state.tool;
-    this.panel = t === 'crop' ? buildCropPanel(this) : t === 'masks' ? buildMaskPanel(this) : t === 'retouch' ? buildRetouchPanel(this) : t === 'presets' ? buildPresetsPanel(this) : t === 'ai' ? buildAIPanel(this) : buildEditPanel(this);
+    this.panel = t === 'crop' ? buildCropPanel(this) : t === 'masks' ? buildMaskPanel(this) : t === 'retouch' ? buildRetouchPanel(this) : t === 'warp' ? buildWarpPanel(this) : t === 'presets' ? buildPresetsPanel(this) : t === 'ai' ? buildAIPanel(this) : buildEditPanel(this);
     body.append(this.panel.el);
     // One section open at a time (see section() in ui.js): keep the first.
     [...body.querySelectorAll('.sec.open')].slice(1).forEach((s) => s.classList.remove('open'));
@@ -581,6 +584,7 @@ const app = {
     if (this.state.tool === 'crop') cropOverlay.draw(overlay, W, H);
     if (this.state.tool === 'masks') maskOverlay.draw(overlay);
     if (this.state.tool === 'retouch') retouchOverlay.draw(overlay);
+    if (this.state.tool === 'warp') warpOverlay.draw(overlay);
   },
 
   updateHud() {
@@ -661,6 +665,7 @@ async function paintStorage(node) {
 const cropOverlay = new CropOverlay(app);
 const maskOverlay = new MaskOverlay(app);
 const retouchOverlay = new RetouchOverlay(app);
+const warpOverlay = new WarpOverlay(app);
 sliderHooks.start = () => { app.state.sliding = true; lensQuality.draft = !!(app.params && (refocusActive(app.params) || lensActive(app.params))); };
 sliderHooks.end = () => { app.state.sliding = false; lensQuality.draft = false; app.requestRender(); };
 
@@ -1651,6 +1656,8 @@ async function select(i) {
   app.requestRender();
   app.aiEnsure();
   developRaw(e);
+  // Face sliders pasted or from a preset: find this photo's faces for them.
+  if (needsFaces(app.params)) ensureFaces(app).then(() => { if (app.images[app.cur] === e) { app.requestRender(); app.refreshPanel(); } }).catch(() => {});
 }
 
 // A linked photo lives in Google Photos (or Drive, Dropbox, OneDrive). On a device that doesn't have
@@ -2529,6 +2536,7 @@ async function renderPhotoForExport(id, opts) {
   const tmp = { bitmap: d.bitmap, linear: lin, sample, ai: e.ai };
   ai.bind(app.engine, tmp);
   await ai.ensure(tmp, params);
+  if (needsFaces(params)) params.warp.faces = (await detectFaces(tmp).catch(() => [])).map(faceShape);
   e.ai = tmp.ai;
   await loadBackground(params);
   const { blob } = await renderExport(app, { ...opts, meta: e.meta || lin?.meta }, params, (p, ww, hh) => outputMatsFor(p, aspect, ww, hh));
@@ -2585,7 +2593,7 @@ const local = (e) => {
   const r = viewer.getBoundingClientRect();
   return [e.clientX - r.left, e.clientY - r.top];
 };
-const toolOverlay = () => ({ crop: cropOverlay, masks: maskOverlay, retouch: retouchOverlay })[app.state.tool] || null;
+const toolOverlay = () => ({ crop: cropOverlay, masks: maskOverlay, retouch: retouchOverlay, warp: warpOverlay })[app.state.tool] || null;
 
 viewer.addEventListener('pointerdown', (e) => {
   if (!app.img) return;
@@ -2653,6 +2661,7 @@ viewer.addEventListener('pointermove', (e) => {
   const tool = toolOverlay();
   if (tool === maskOverlay) { maskOverlay.move(e, x, y); app.drawOverlay(); }
   if (tool === retouchOverlay) retouchOverlay.move(e, x, y);
+  if (tool === warpOverlay) warpOverlay.move(e, x, y);
   const onSplit = app.state.compare === 'split' && app.state.tool === 'edit' && Math.abs(x - app.state.splitX * viewer.clientWidth) < 20;
   viewer.style.cursor = app.state.pick ? 'crosshair' : onSplit ? 'ew-resize' : spaceDown ? 'grab' : tool ? tool.cursor(x, y) : app.view.fit ? '' : 'grab';
 });
@@ -2675,7 +2684,7 @@ const endPointer = (e) => {
         const now = performance.now();
         if (now - lastTap.t < 320 && Math.hypot(x - lastTap.x, y - lastTap.y) < 30) {
           lastTap.t = 0;
-          if (app.state.tool !== 'crop' && app.state.tool !== 'retouch' && !(app.state.tool === 'masks' && activeMask(app))) app.toggleZoom(x * DPR(), y * DPR());
+          if (app.state.tool !== 'crop' && app.state.tool !== 'retouch' && app.state.tool !== 'warp' && !(app.state.tool === 'masks' && activeMask(app))) app.toggleZoom(x * DPR(), y * DPR());
         } else lastTap = { t: now, x, y };
       }
     }
@@ -2687,7 +2696,7 @@ const endPointer = (e) => {
 };
 viewer.addEventListener('pointerup', endPointer);
 viewer.addEventListener('pointercancel', endPointer);
-viewer.addEventListener('pointerleave', () => { direct.hide(); if (!pointer) { maskOverlay.leave(); retouchOverlay.hover = null; app.drawOverlay(); } });
+viewer.addEventListener('pointerleave', () => { direct.hide(); if (!pointer) { maskOverlay.leave(); retouchOverlay.hover = null; warpOverlay.hover = null; app.drawOverlay(); } });
 
 viewer.addEventListener('wheel', (e) => {
   if (!app.img) return;
@@ -2956,6 +2965,7 @@ window.addEventListener('keydown', (e) => {
     case 'r': case 'c': app.setTool(t === 'crop' ? 'edit' : 'crop'); break;
     case 'm': app.setTool(t === 'masks' ? 'edit' : 'masks'); break;
     case 'q': app.setTool(t === 'retouch' ? 'edit' : 'retouch'); break;
+    case 'l': app.setTool(t === 'warp' ? 'edit' : 'warp'); break;
     case '/': if (t === 'retouch') newSourceForSelected(app); break;
     case 'h': if (t === 'retouch') { retouchState.hide = !retouchState.hide; app.refreshPanel(); app.drawOverlay(); } break;
     case 'p': app.setTool(t === 'presets' ? 'edit' : 'presets'); break;
@@ -2971,7 +2981,7 @@ window.addEventListener('keydown', (e) => {
     case 'Enter': if (t === 'crop') app.setTool('edit'); break;
     case 'Escape':
       if (app.state.pick) { app.state.pick = null; viewer.classList.remove('picking'); }
-      else if (t === 'crop' || t === 'retouch') app.setTool('edit');
+      else if (t === 'crop' || t === 'retouch' || t === 'warp') app.setTool('edit');
       break;
     case '[': case ']': {
       const up = k === ']';
@@ -3053,7 +3063,7 @@ function boot() {
     // Test hook: ?debug exposes the app to automated checks.
     if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; app._consistent = runConsistent; app._matchRenderer = matchRenderer; }
     if (!prefs.since) { prefs.since = Date.now(); savePrefs(); }   // for "Since you switched" in Settings
-    app.engine.sourcePasses = retouchPasses;
+    app.engine.sourcePasses = chainPasses(warpPass, retouchPasses);
     fillHooks.onReady = () => { if (app.engine.L) app.engine.L.baseKey = null; app.requestRender(); };
     ai.onChange(() => { if (app.state.tool === 'ai' || app.state.tool === 'masks') app.refreshPanel(); app.requestRender(); });
   } catch (err) {

@@ -10,6 +10,7 @@ import { slider, segmented, button, toggle, section } from './ui.js';
 import { A } from './geometry.js';
 import { findSource, imageOf, radii, pin, makeFill, MAX_OPS } from './retouch.js';
 import { findDust } from './dust.js';
+import { warpActive } from './warp.js';
 import { findSpots } from './blemish.js';
 import { detectFaces, ai } from './ai/ai.js';
 import { PORTRAIT, portraitAmount, setPortrait } from './portrait.js';
@@ -26,7 +27,8 @@ function sourceImage(app) {
   const L = E.L;
   if (!L) return null;
   E.process(app.params, null); // makes sure the base is current
-  const t = L.T.lens;
+  // After Reshape when it's in use (spots are placed on the reshaped photo).
+  const t = (L.T.warp && warpActive(app.params.warp) && L.T.warp) || L.T.lens;
   if (t) return imageOf(E, t);
   // No correction yet: copy the plain source into a float target to read from.
   const tgt = E.tgt('lens', E.gl.RGBA16F, true);
