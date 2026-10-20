@@ -540,16 +540,16 @@ const app = {
       if (compare === 'split') {
         const sx = Math.round(clamp(t.splitX, 0, 1) * cw);
         E.renderBefore(before, v);
-        E.render(p, { ...v, clip: t.clip, overlayId, scissor: [sx, 0, cw - sx, ch] });
+        E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, scissor: [sx, 0, cw - sx, ch] });
         E.blitBefore([0, 0, sx, ch]);
       } else {
         const vl = this.computeView(p, { x0: 0, w: half });
         E.renderBefore(before, vl);
         this.computeView(p, { x0: half, w: cw - half });
-        E.render(p, { ...v, clip: t.clip, overlayId, scissor: [half, 0, cw - half, ch] });
+        E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, scissor: [half, 0, cw - half, ch] });
         E.blitBefore([0, 0, half, ch]);
       }
-    } else E.render(p, { ...v, clip: t.clip, overlayId });
+    } else E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId });
     this.drawOverlay();
     this.updateHud();
     this.scheduleHisto();
@@ -1409,10 +1409,31 @@ function autoPreviewLong(engine) {
 const RAW_BASE = 2;
 const camLook = (key) => { const l = key && prefs.cameraLooks?.[key]; return l && (l.base || 1) === RAW_BASE ? l : null; };
 
+// Developed RAWs of photos you just left stay in memory, within a budget, so going back to one is
+// instant instead of another decode (seconds on an old CPU). The oldest go first; a quarter of the
+// device's memory at most (300 MB where the browser doesn't say how much there is).
+const developed = new Map();   // photo id → linear data, oldest first
+const DEVELOPED_BUDGET = Math.min(1200, (navigator.deviceMemory ? navigator.deviceMemory * 256 : 300)) * 1e6;
+const devBytes = (lin) => lin.data.byteLength + (lin.preview?.data.byteLength || 0);
+function keepDeveloped(id, lin) {
+  developed.delete(id);
+  if (devBytes(lin) > DEVELOPED_BUDGET) return;
+  developed.set(id, lin);
+  let total = 0;
+  for (const l of developed.values()) total += devBytes(l);
+  for (const [k, l] of developed) { if (total <= DEVELOPED_BUDGET) break; developed.delete(k); total -= devBytes(l); }
+}
+function takeDeveloped(id) {
+  const lin = developed.get(id);
+  developed.delete(id);
+  return lin || null;
+}
+
 function releaseBitmap(e) {
   if (app.images[app.cur] === e) return;
   if (e.bitmap) { e.bitmap.close?.(); e.bitmap = null; }
-  e.linear = null; // decoded RAW data is large; it is re-developed when the photo is opened again
+  if (e.linear) keepDeveloped(e.id, e.linear);
+  e.linear = null; // decoded RAW data is large: kept above while it fits, else developed again
   e.file = null;
   clearTimeout(e.fullTimer);
 }
@@ -1566,7 +1587,10 @@ async function select(i) {
   if (prev && app.params) prev.params = app.params;
   flushSave();   // the previous photo's last edit, before anything switches
   app.cur = i;
-  if (!e.bitmap) {
+  // Developed a moment ago (see keepDeveloped): back at once, without reading the file again.
+  const kept = e.raw && !e.linear ? takeDeveloped(e.id) : null;
+  if (kept) { e.linear = kept; e.meta = kept.meta || e.meta; }
+  if (!e.bitmap && !e.linear) {
     try {
       e.file = await originalFile(e);
       if (!e.file && cloud.cloud.signedIn && cloud.cloud.provider === 'lumen') {
@@ -1661,6 +1685,7 @@ let pendingDelete = null;
 
 function detachPhotos(ids) {
   const set = new Set(ids);
+  for (const id of set) developed.delete(id);
   const cur = app.images[app.cur];
   // After deleting the open photo, show the next one in the order the user sees (or the previous).
   const seen = visibleImages();

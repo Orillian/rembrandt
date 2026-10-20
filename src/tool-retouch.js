@@ -14,7 +14,7 @@ import { detectFaces, ai } from './ai/ai.js';
 import { PORTRAIT, portraitAmount, setPortrait } from './portrait.js';
 
 // Tool settings shared by the overlay and the panel (new spots use them; the selected spot shows them).
-export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
+export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, spots: false, spotLevel: 50, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
 
 const ops = (app) => app.params.retouch || (app.params.retouch = []);
 const aspect = (app) => app.img?.aspect || 1.5;
@@ -354,6 +354,10 @@ export function buildRetouchPanel(app) {
   const feather = slider({ label: 'Feather', min: 0, max: 100, def: 50, get: () => (sel()?.feather ?? S.feather) * 100, set: (v) => setting('feather', v / 100), commit: () => app.commit() });
   const opacity = slider({ label: 'Opacity', min: 0, max: 100, def: 100, get: () => (sel()?.opacity ?? S.opacity) * 100, set: (v) => setting('opacity', v / 100), commit: () => app.commit() });
   const hide = toggle('Show spots', () => !S.hide, (v) => { S.hide = !v; app.drawOverlay(); });
+  // Visualize Spots: the photo as white specks on black, so dust and spots stand out (Detail sets how faint).
+  const visualize = toggle('Visualize spots', () => S.spots, (v) => { S.spots = v; spotLevel.el.hidden = !v; app.requestRender(); });
+  const spotLevel = slider({ label: 'Detail', min: 1, max: 100, def: 50, get: () => S.spotLevel, set: (v) => { S.spotLevel = v; app.requestRender(); } });
+  spotLevel.el.hidden = !S.spots;
   const count = el('div', { class: 'hint' });
   const newSrc = button('New source', () => newSourceForSelected(app), 'sm ghost', 'swap');
   const del = button('Delete', () => deleteSelected(app), 'sm ghost', 'trash');
@@ -361,7 +365,7 @@ export function buildRetouchPanel(app) {
   function refresh() {
     mode.set(sel()?.mode || S.mode);
     feather.el.hidden = (sel()?.mode || S.mode) === 'fill';
-    size.refresh(); feather.refresh(); opacity.refresh(); hide.refresh();
+    size.refresh(); feather.refresh(); opacity.refresh(); hide.refresh(); visualize.refresh(); spotLevel.refresh();
     retouch.forEach((r) => r.refresh());
     const n = ops(app).length;
     count.textContent = fillState.busy ? `Removing… (${fillState.busy} left)` : fillState.error || (n ? `${n} spot${n === 1 ? '' : 's'} on this photo${sel() ? ` · spot ${S.selected + 1} selected` : ''}` : 'No spots yet.');
@@ -394,7 +398,7 @@ export function buildRetouchPanel(app) {
   spots.body.append(
     el('p', { class: 'hint rt-intro' }, 'Paint over anything to remove it. Generative fills it with what was most likely behind it; Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).'),
     el('div', { class: 'field' }, el('span', {}, 'Mode'), mode.el),
-    size.el, feather.el, opacity.el, hide.el,
+    size.el, feather.el, opacity.el, hide.el, visualize.el, spotLevel.el,
     el('div', { class: 'row-btns rt-actions' }, newSrc, del, clear),
     count);
   const peopleNote = el('div', { class: 'hint' });

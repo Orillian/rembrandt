@@ -558,6 +558,7 @@ export class Engine {
       uToImage: v.toImage, uToCrop: v.toCrop,
       uCropTest: v.cropTest ? 1 : 0,
       uClip: v.clip ? 1 : 0,
+      uSpots: v.spots || 0,
       uDither: v.float ? 0 : 1,
       uOverlay: v.overlayId ? 1 : 0,
       uBg: v.bg || [0.07, 0.075, 0.085],

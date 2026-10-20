@@ -431,7 +431,7 @@ uniform mat3 uToImage, uToCrop;
 uniform int uCropTest, uClip, uOverlay, uCurveOn, uPathToWhite, uDither;
 uniform vec3 uBg;
 uniform vec2 uInSize, uFullSize;
-uniform float uLod, uSharpMask, uCropAspect, uTC, uTK, uTW, uSpeckle;
+uniform float uLod, uSharpMask, uCropAspect, uTC, uTK, uTW, uSpeckle, uSpots;
 uniform vec2 uSharp, uNR;
 uniform vec4 uVig;
 uniform vec3 uGrain;
@@ -629,6 +629,20 @@ void main() {
     s += n * uGrain.x * 0.28 * (0.35 + 2.6 * l * (1.0 - l));
   }
   s = clamp(s, 0.0, 1.0);
+  // Visualize Spots: how far each pixel's brightness stands out from a ring around it, as white on
+  // black; dust on the sensor and small spots, invisible in a sky, show as rings and dots.
+  if (uSpots > 0.0) {
+    // Two rings (4 and 10 pixels out at this zoom), so both specks and wider dust discs stand out;
+    // Detail sets the threshold on an exponential scale, from 15 % brighter or darker down to 0.4 %.
+    float Y = lum(base.rgb), Y1 = 0.0, Y2 = 0.0;
+    for (int i = 0; i < 8; i++) {
+      vec2 dir = vec2(cos(float(i) * 0.785398), sin(float(i) * 0.785398));
+      Y1 += lum(at(uv + dir * tx * 4.0)); Y2 += lum(at(uv + dir * tx * 10.0));
+    }
+    float d = max(abs(log2((Y + 1e-4) / (Y1 / 8.0 + 1e-4))), abs(log2((Y + 1e-4) / (Y2 / 8.0 + 1e-4))));
+    float t = 0.2 * pow(0.006 / 0.2, uSpots);
+    s = vec3(smoothstep(t, t * 2.0, d));
+  }
   if (uClip == 1) {
     if (max(s.r, max(s.g, s.b)) >= 0.998) s = vec3(1.0, 0.18, 0.22);
     else if (max(s.r, max(s.g, s.b)) <= 0.004) s = vec3(0.2, 0.45, 1.0);
