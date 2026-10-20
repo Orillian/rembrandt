@@ -10,6 +10,8 @@ The R logo, wordmark and app icons, under the same licence as the rest of Rembra
 | `r-mark-halftone.svg`, `r-mark-halftone-light.svg` | The R drawn as bronze dots, lit from the top right like the website's paintings. 64 px and up, on dark or light backgrounds. |
 | `rembrandt.svg`, `rembrandt-light.svg` | Lockup: the halftone R and REMBRANDT. |
 | `app-icon.svg` → `/app-icon.png` | Desktop icon: warm ink tile, faint contour lines, the halftone R. `npx tauri icon app-icon.png -o src-tauri/icons` |
+
+**Rendering the icons.** Render the SVGs to PNG with a browser (Chrome, or Playwright's Chromium at 1024 × 1024 with a transparent background). Some SVG rasterisers drop the tile's `clipPath` and produce an almost empty, transparent image, which is how 0.3.16 and earlier shipped blank 128 px and larger icons on Linux. Check the result before committing: about 60 % of a tile's pixels are opaque.
 | `app-icon-small.svg` | The same tile with the flat R, for the 64 px and smaller icon files (`32x32.png`, `64x64.png`, `Square30x30Logo.png`, `Square44x44Logo.png`, `icon.ico`), where dots blur. |
 | `app-icon-mobile.svg` | Phones: a full square (iOS rounds it and rejects transparency; Android masks it). iOS PNGs must have no alpha channel. |
 
