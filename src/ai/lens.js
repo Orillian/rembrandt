@@ -30,8 +30,7 @@ vec3 background(vec2 uv, vec3 rgb) {
     // cover-fit the picture
     vec2 q = uv - 0.5;
     if (uBgAspect > uImgAspect) q.x *= uImgAspect / uBgAspect; else q.y *= uBgAspect / uImgAspect;
-    vec3 c = FROM_SRGB * textureLod(uBgImg, q + 0.5, 0.0).rgb;
-    return vec3(hillInv(c.r, uInC, uInK), hillInv(c.g, uInC, uInK), hillInv(c.b, uInC, uInK));
+    return rgbToneInv(FROM_SRGB * textureLod(uBgImg, q + 0.5, 0.0).rgb, uInC, uInK);
   }
   return rgb;
 }

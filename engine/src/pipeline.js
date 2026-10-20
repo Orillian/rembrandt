@@ -33,6 +33,17 @@ export function preUniforms(p, stats) {
 
 export const toneActive = (p) => !!(p.blacks || p.shadows || p.highlights || p.whites || p.clarity);
 
+// Tone zone shapes over displayed lightness (see ZONES in shaders.js): [centre, width below, width
+// above (−1 = flat to that end)], [EV at +100, EV at −100]. Fitted to Camera Raw's renders of the
+// test charts (how far each slider moves each tone), then checked for smooth, never-reversing ramps.
+export const ZONE_SHAPES = {
+  blacks: [[0.185, -1, 0.376], [0.775, 1.6]],
+  shadows: [[0.255, -1, 0.771], [1.325, 1.15]],
+  highlights: [[0.715, 0.72, -1], [1.375, 1.625]],
+  whites: [[0.645, 0.398, -1], [0.85, 0.562]],
+};
+const ZONE_ORDER = ['blacks', 'shadows', 'highlights', 'whites'];
+
 export function mainUniforms(p) {
   const hsl = p.hsl || { hue: [], sat: [], lum: [] };
   const mixOn = [hsl.hue, hsl.sat, hsl.lum].some((a) => a.some(Boolean));
@@ -46,6 +57,8 @@ export function mainUniforms(p) {
   return {
     uGuideOn: toneActive(p) ? 1 : 0,
     uTone: [p.blacks / 100, p.shadows / 100, p.highlights / 100, p.whites / 100],
+    uZoneW: new Float32Array(ZONE_ORDER.flatMap((k) => [...ZONE_SHAPES[k][0], 0])),
+    uZoneA: new Float32Array(ZONE_ORDER.flatMap((k) => ZONE_SHAPES[k][1])),
     uClarity: p.clarity / 100,
     uTexture: p.texture / 100,
     uWBOn: p.temp || p.tint ? 1 : 0,
@@ -67,7 +80,9 @@ export function mainUniforms(p) {
 // ------------------------------------------------------------------ FINAL
 
 export function finalUniforms(p, fullW, fullH, workH, sceneSource) {
-  const c = (sceneSource ? SCENE_CONTRAST : REF_CONTRAST) * 2 ** ((p.contrast / 100) * 0.6);
+  // Negative contrast flattens less steeply: below c ≈ 1 the curve's slope at black is unbounded, and
+  // near-black then jumps (a visible step at the foot of dark gradients).
+  const c = (sceneSource ? SCENE_CONTRAST : REF_CONTRAST) * 2 ** ((p.contrast / 100) * (p.contrast < 0 ? 0.48 : 0.6));
   const ws = workH / fullH;
   return {
     uTC: c,

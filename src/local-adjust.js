@@ -82,7 +82,7 @@ void main() {
   vec3 sc = textureLod(uSrc, vUv, 0.0).rgb;
   if (uSrcLinear == 1) {
     vec3 r = FROM_SRGB * (sc * uSrcGain);
-    sc = TO_SRGB * vec3(hill(r.r, uInC, uInK), hill(r.g, uInC, uInK), hill(r.b, uInC, uInK));
+    sc = TO_SRGB * rgbTone(r, uInC, uInK, 1.0);
   }
   vec3 lab = oklab(FROM_SRGB * max(sc, 0.0));
   float w = 0.0;

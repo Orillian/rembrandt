@@ -13,7 +13,7 @@
 //           OkLCh, curves, vignette, grain
 // Textures keep image row 0 at v = 0; only FINAL knows screen/crop geometry (3x3 matrices).
 
-import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST, RAW_CHROMA } from './color.js';
+import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST, RAW_CHROMA, SCENE_CONTRAST, toneK, sceneWhiteGain } from './color.js';
 
 // Emit a JS row-major matrix as a GLSL mat3 applied as `M * v`.
 const glmat = (m) => `mat3(${[0, 1, 2].map((c) => [0, 1, 2].map((r) => m[r][c].toFixed(9)).join(', ')).join(', ')})`;
@@ -53,18 +53,54 @@ vec3 unOklab(vec3 lab) { vec3 l = OKM2I * lab; return OKM1I * (l * l * l); }
 float hill(float x, float c, float k) { float p = pow(max(x, 0.0), c); return p / (p + k); }
 float hillInv(float y, float c, float k) { float t = clamp(y, 0.0, 0.9985); return pow(k * t / (1.0 - t), 1.0 / c); }
 
+// RGB tone (as in the DNG specification): the largest and smallest channel go through the curve, the
+// middle one keeps its place between them, so hue holds as values move along the curve (separate
+// per-channel curves skew it: orange turns yellow as it brightens). w scales the curve to a white
+// point (1 = none). The inverse is exact, so display-referred images round-trip unchanged.
+vec3 rgbTone(vec3 c, float tc, float tk, float w) {
+  c = max(c, 0.0);
+  float hi = max(c.r, max(c.g, c.b)), lo = min(c.r, min(c.g, c.b));
+  float H = min(1.0, hill(hi, tc, tk) * w), L = min(1.0, hill(lo, tc, tk) * w);
+  if (hi - lo < 1e-9) return vec3(H);
+  return L + (c - lo) * ((H - L) / (hi - lo));
+}
+vec3 rgbToneInv(vec3 d, float tc, float tk) {
+  d = clamp(d, 0.0, 1.0);
+  float hi = max(d.r, max(d.g, d.b)), lo = min(d.r, min(d.g, d.b));
+  float H = hillInv(hi, tc, tk), L = hillInv(lo, tc, tk);
+  if (hi - lo < 1e-9) return vec3(H);
+  return L + (d - lo) * ((H - L) / (hi - lo));
+}
+
 // Raised-cosine window: 1 at centre, 0 beyond ±w.
 float bump(float x, float c, float w) { float d = clamp((x - c) / w, -1.0, 1.0); return 0.5 + 0.5 * cos(d * PI); }
 `;
 
-// Tone zones in EV relative to middle grey. t = (blacks, shadows, highlights, whites), each in [-1, 1].
+// Tone zones (blacks, shadows, highlights, whites). Each zone is a soft window over the displayed
+// lightness of the local base layer (x, 0–1, through the RAW display curve), wide and overlapping like
+// a print's tones: a slider moves its own range most and fades out across its neighbours instead of
+// stopping at an edge, so adjustments blend into the light around them. Shapes (see ZONE_SHAPES in
+// pipeline.js): centre, width below, width above (negative = flat to that end), EV at +100, EV at −100.
 const ZONES = `
-float zoneGain(float ev, vec4 t) {
-  float wB = ev < -5.5 ? 1.0 : bump(ev, -5.5, 2.5);
-  float wS = bump(ev, -2.5, 2.6);
-  float wH = bump(ev, 1.6, 2.2);
-  float wW = ev > 3.4 ? 1.0 : bump(ev, 3.4, 2.0);
-  return t.x * 1.2 * wB + t.y * 1.5 * wS + t.z * 1.5 * wH + t.w * 1.2 * wW;
+uniform vec4 uZoneW[4];     // centre, width below, width above
+uniform vec2 uZoneA[4];     // EV at +100, at −100
+float zoneWindow(float x, vec4 z) {
+  float w = x < z.x ? z.y : z.z;
+  if (w < 0.0) return 1.0;
+  return bump(x, z.x, w);
+}
+float zoneGain(float x, vec4 t) {
+  float g = 0.0;
+  for (int i = 0; i < 4; i++) {
+    float v = t[i];
+    g += v * (v > 0.0 ? uZoneA[i].x : uZoneA[i].y) * zoneWindow(x, uZoneW[i]);
+  }
+  return g;
+}
+// Displayed lightness (0–1) of a scene-linear luminance, through the RAW display curve.
+float shownLightness(float Y) {
+  float p = pow(max(Y, 0.0), ${SCENE_CONTRAST.toFixed(3)});
+  return pow(clamp(p / (p + ${toneK(SCENE_CONTRAST).toFixed(6)}) * ${sceneWhiteGain(SCENE_CONTRAST).toFixed(6)}, 0.0, 1.0), 1.0 / 2.2);
 }
 `;
 
@@ -87,8 +123,7 @@ vec3 rawLook(vec3 rgb) {
 vec3 sceneIn(vec2 uv) {
   vec3 c = textureLod(uSrc, uv, 0.0).rgb;
   if (uSrcLinear == 1) return rawLook(FROM_SRGB * (c * uSrcGain));
-  c = FROM_SRGB * c;
-  return vec3(hillInv(c.r, uInC, uInK), hillInv(c.g, uInC, uInK), hillInv(c.b, uInC, uInK));
+  return rgbToneInv(FROM_SRGB * c, uInC, uInK);
 }
 `;
 
@@ -326,7 +361,7 @@ void main() {
     vec2 ab = textureLod(uGuideAB, vUv, 0.0).xy;
     float base = ab.x * g + ab.y;
     float ev = base - log2(GREY);
-    float gain = zoneGain(ev, uTone);
+    float gain = zoneGain(shownLightness(exp2(base)), uTone);
     float detail = clamp(g - base, -3.0, 3.0);
     gain += uClarity * 0.65 * detail * exp(-ev * ev / 24.0);
     rgb *= exp2(gain);
@@ -393,7 +428,7 @@ void main() {
 export const FINAL = HEAD + LIB + `
 uniform sampler2D uIn, uCurve;
 uniform mat3 uToImage, uToCrop;
-uniform int uCropTest, uClip, uOverlay, uCurveOn, uPathToWhite;
+uniform int uCropTest, uClip, uOverlay, uCurveOn, uPathToWhite, uDither;
 uniform vec3 uBg;
 uniform vec2 uInSize, uFullSize;
 uniform float uLod, uSharpMask, uCropAspect, uTC, uTK, uTW, uSpeckle;
@@ -496,20 +531,10 @@ vec3 despeckle(vec2 uv, vec2 tx, vec3 c0, float amt) {
   return mix(c0, med * Y0, w);
 }
 
-// Display transform. Display-referred sources (JPEG) use the exact per-channel inverse of their input
-// curve, so an untouched JPEG round-trips unchanged. Scene-referred sources (RAW) use RGB tone as in
-// the DNG specification (see sceneTone in color.js): the largest and smallest channel through the
-// curve with a white point, the middle one in proportion, which keeps hue, gives colours the
-// saturation of a contrast curve, and runs bright colours to white.
-float sceneCurve(float x) { return min(1.0, hill(x, uTC, uTK) * uTW); }
-vec3 displayTransform(vec3 rgb) {
-  rgb = max(rgb, 0.0);
-  if (uPathToWhite == 0) return vec3(hill(rgb.r, uTC, uTK), hill(rgb.g, uTC, uTK), hill(rgb.b, uTC, uTK));
-  float hi = max(rgb.r, max(rgb.g, rgb.b)), lo = min(rgb.r, min(rgb.g, rgb.b));
-  float H = sceneCurve(hi), L = sceneCurve(lo);
-  if (hi - lo < 1e-9) return vec3(H);
-  return L + (rgb - lo) * ((H - L) / (hi - lo));
-}
+// Display transform: RGB tone (see rgbTone) through the display curve. Display-referred sources (JPEG)
+// entered through its exact inverse, so an untouched JPEG round-trips unchanged; scene-referred ones
+// (RAW) get Camera Raw's contrast and a white point (uTW), which runs bright colours to white.
+vec3 displayTransform(vec3 rgb) { return rgbTone(rgb, uTC, uTK, uTW); }
 
 // Keep lightness and hue, reduce chroma until the colour fits in sRGB (bisection in OkLCh).
 vec3 gamutMap(vec3 lin, bool soft) {
@@ -609,5 +634,8 @@ void main() {
     else if (max(s.r, max(s.g, s.b)) <= 0.004) s = vec3(0.2, 0.45, 1.0);
   }
   if (uOverlay == 1) s = mix(s, vec3(0.98, 0.22, 0.34), base.a * 0.55);
+  // 8-bit output is dithered: triangular noise of ±1 step turns the steps of a smooth gradient (a sky,
+  // a lifted shadow) into grain too fine to see, instead of bands. Float (16-bit) exports skip it.
+  if (uDither == 1) s = clamp(s + (hash(fc) + hash(fc + vec2(17.3, 41.9)) - 1.0) / 255.0, 0.0, 1.0);
   o = vec4(s, 1.0);
 }`;

@@ -310,35 +310,84 @@ fn urlencoding_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// ---- In-app updates (desktop), never needing an administrator password: Windows installs per user
-// (NSIS currentUser), macOS replaces the app's contents in place, Linux replaces the AppImage. Asks GitHub for the latest release of this repository, downloads
+// ---- In-app updates (desktop). Windows installs per user (NSIS currentUser) and macOS replaces the
+// app's contents in place, with no administrator password; on Linux an AppImage, or the copy the
+// install script unpacked into your home folder, is replaced the same way, and a system package
+// (pacman on Arch and Omarchy, .deb, .rpm) is installed with the system's own password prompt (pkexec),
+// as the install script would. Asks GitHub for the latest release of this repository, downloads
 // the installer for this platform over HTTPS, checks it against the release's SHA256SUMS (a broken
 // or partial download is never installed), installs it and restarts. Progress is polled by the
 // web side. Phones update from their stores.
 
 const REPO: &str = "thesnarkitecht/rembrandt";
 
+#[derive(Clone)]
+struct Pending {
+    url: String,
+    name: String,
+    sums: String,
+    /// The release's PKGBUILD (pacman installs build their package from the .deb with it).
+    pkgbuild: Option<String>,
+}
+
 #[derive(Default)]
 struct UpdateState {
-    /// The release found by `update_check`: version, installer URL and name, SHA256SUMS URL.
-    pending: Mutex<Option<(String, String, String, String)>>,
+    /// The release found by `update_check`.
+    pending: Mutex<Option<Pending>>,
     /// Bytes downloaded, and the total if the server said.
     progress: Mutex<(u64, Option<u64>)>,
 }
 
 /// The installer this copy of the app updates from, as named in the release.
-#[cfg(desktop)]
+#[cfg(windows)]
 fn update_asset() -> Result<String, String> {
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
-    if cfg!(windows) {
-        Ok(format!("Rembrandt-windows-{arch}-setup.exe"))
-    } else if cfg!(target_os = "macos") {
-        Ok(format!("Rembrandt-macos-{arch}.dmg"))
-    } else if std::env::var_os("APPIMAGE").is_some() {
-        Ok(format!("Rembrandt-linux-{}.AppImage", if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }))
+    Ok(format!("Rembrandt-windows-{}-setup.exe", if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" }))
+}
+#[cfg(target_os = "macos")]
+fn update_asset() -> Result<String, String> {
+    Ok(format!("Rembrandt-macos-{}.dmg", if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" }))
+}
+#[cfg(all(desktop, not(windows), not(target_os = "macos")))]
+fn update_asset() -> Result<String, String> {
+    let (deb, rpm) = if cfg!(target_arch = "aarch64") { ("arm64", "aarch64") } else { ("amd64", "x86_64") };
+    Ok(match linux_install()? {
+        LinuxInstall::AppImage(_) | LinuxInstall::Unpacked(_) => format!("Rembrandt-linux-{rpm}.AppImage"),
+        LinuxInstall::Pacman | LinuxInstall::Deb => format!("Rembrandt-linux-{deb}.deb"),
+        LinuxInstall::Rpm => format!("Rembrandt-linux-{rpm}.rpm"),
+    })
+}
+
+/// How this copy was installed on Linux.
+#[cfg(all(desktop, not(windows), not(target_os = "macos")))]
+enum LinuxInstall {
+    /// A downloaded AppImage, at this path.
+    AppImage(PathBuf),
+    /// The AppImage the install script unpacked, into this folder (…/rembrandt/app).
+    Unpacked(PathBuf),
+    Pacman,
+    Deb,
+    Rpm,
+}
+
+#[cfg(all(desktop, not(windows), not(target_os = "macos")))]
+fn linux_install() -> Result<LinuxInstall, String> {
+    if let Some(p) = std::env::var_os("APPIMAGE") {
+        return Ok(LinuxInstall::AppImage(PathBuf::from(p)));
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // The install script's copy: $XDG_DATA_HOME/rembrandt/app/… (or ~/.local/share/…).
+    if let Some(app) = exe.ancestors().find(|a| a.file_name().is_some_and(|n| n == "app") && a.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "rembrandt")) {
+        return Ok(LinuxInstall::Unpacked(app.to_path_buf()));
+    }
+    let owns = |cmd: &str, args: &[&str]| std::process::Command::new(cmd).args(args).arg(&exe).output().map(|o| o.status.success()).unwrap_or(false);
+    if owns("pacman", &["-Qqo"]) {
+        Ok(LinuxInstall::Pacman)
+    } else if owns("dpkg", &["-S"]) {
+        Ok(LinuxInstall::Deb)
+    } else if owns("rpm", &["-qf"]) {
+        Ok(LinuxInstall::Rpm)
     } else {
-        // Installed from a .deb/.rpm or the install script: the package manager or the script updates it.
-        Err("Update this copy the way you installed it".into())
+        Err("This copy wasn't installed in a way Rembrandt can update; use the installer again".into())
     }
 }
 
@@ -373,9 +422,10 @@ async fn update_check(app: tauri::AppHandle, state: State<'_, UpdateState>) -> R
                 .filter(|u| u.starts_with(&prefix)).map(String::from)
         };
         let current = app.package_info().version.to_string();
+        let pkgbuild = if asset.ends_with(".deb") && pacman_install() { Some(url_of("PKGBUILD").ok_or("The release has no PKGBUILD")?) } else { None };
         match (url_of(&asset), url_of("SHA256SUMS")) {
             (Some(url), Some(sums)) if newer(&version, &current) => {
-                *state.pending.lock().unwrap() = Some((version.clone(), url, asset, sums));
+                *state.pending.lock().unwrap() = Some(Pending { url, name: asset, sums, pkgbuild });
                 Ok(Some(version))
             }
             _ => Ok(None),
@@ -394,21 +444,32 @@ async fn update_install(app: tauri::AppHandle, state: State<'_, UpdateState>) ->
     #[cfg(desktop)]
     {
         use sha2::{Digest, Sha256};
-        let (_version, url, name, sums_url) = state.pending.lock().unwrap().clone().ok_or("Check for updates first")?;
+        let Pending { url, name, sums: sums_url, pkgbuild, .. } = state.pending.lock().unwrap().clone().ok_or("Check for updates first")?;
         let client = http()?;
         let sums = client.get(&sums_url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?
             .text().await.map_err(|e| e.to_string())?;
-        let expected = sums.lines().find_map(|l| {
+        let sum_of = |file: &str| sums.lines().find_map(|l| {
             let mut it = l.split_whitespace();
             let (h, f) = (it.next()?, it.next()?);
-            (f.trim_start_matches('*') == name).then(|| h.to_lowercase())
-        }).ok_or("The release has no checksum for this installer")?;
+            (f.trim_start_matches('*') == file).then(|| h.to_lowercase())
+        });
+        let expected = sum_of(&name).ok_or("The release has no checksum for this installer")?;
+        let dir = std::env::temp_dir().join("rembrandt-update");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // pacman: the PKGBUILD that turns the .deb into a package, checked like the installer.
+        if let Some(pb) = pkgbuild {
+            let text = client.get(&pb).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?
+                .bytes().await.map_err(|e| e.to_string())?;
+            let got: String = Sha256::digest(&text).iter().map(|b| format!("{b:02x}")).collect();
+            if Some(got) != sum_of("PKGBUILD") {
+                return Err("The PKGBUILD download was damaged (checksum mismatch). Try again.".into());
+            }
+            std::fs::write(dir.join("PKGBUILD"), &text).map_err(|e| e.to_string())?;
+        }
 
         *state.progress.lock().unwrap() = (0, None);
         let mut resp = client.get(&url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
         state.progress.lock().unwrap().1 = resp.content_length();
-        let dir = std::env::temp_dir().join("rembrandt-update");
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let file = dir.join(&name);
         let mut out = std::fs::File::create(&file).map_err(|e| e.to_string())?;
         let mut hasher = Sha256::new();
@@ -477,17 +538,87 @@ fn install_and_restart(app: &tauri::AppHandle, dmg: &Path) -> Result<(), String>
 }
 
 #[cfg(all(desktop, not(windows), not(target_os = "macos")))]
-fn install_and_restart(app: &tauri::AppHandle, image: &Path) -> Result<(), String> {
+fn pacman_install() -> bool {
+    matches!(linux_install(), Ok(LinuxInstall::Pacman))
+}
+#[cfg(any(windows, target_os = "macos"))]
+fn pacman_install() -> bool {
+    false
+}
+
+#[cfg(all(desktop, not(windows), not(target_os = "macos")))]
+fn install_and_restart(app: &tauri::AppHandle, file: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    // AppImage: replace the file in place (a running AppImage can be replaced), then start it.
-    let target = PathBuf::from(std::env::var_os("APPIMAGE").ok_or("Not running as an AppImage")?);
-    let tmp = target.with_extension("AppImage.new");
-    std::fs::copy(image, &tmp).map_err(|e| e.to_string())?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
-    std::process::Command::new(&target).spawn().map_err(|e| e.to_string())?;
-    app.exit(0);
-    Ok(())
+    use std::process::Command;
+    let run = |cmd: &mut Command, what: &str| -> Result<(), String> {
+        let out = cmd.output().map_err(|e| format!("{what}: {e}"))?;
+        if out.status.success() { return Ok(()); }
+        // pkexec: 126 = the password prompt was dismissed, 127 = not authorised.
+        if matches!(out.status.code(), Some(126) | Some(127)) { return Err("The update needs your password to install".into()); }
+        Err(format!("{what} failed: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")))
+    };
+    let have = |cmd: &str| Command::new("sh").args(["-c", &format!("command -v {cmd}")]).output().map(|o| o.status.success()).unwrap_or(false);
+    let as_root = |args: &[&str]| -> Result<Command, String> {
+        if !have("pkexec") { return Err(format!("Install it with: sudo {}", args.join(" "))); }
+        let mut c = Command::new("pkexec");
+        c.args(args);
+        Ok(c)
+    };
+    let f = file.to_string_lossy().to_string();
+    match linux_install()? {
+        LinuxInstall::AppImage(target) => {
+            // A running AppImage can be replaced: swap the file, then start it.
+            let tmp = target.with_extension("AppImage.new");
+            std::fs::copy(file, &tmp).map_err(|e| e.to_string())?;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+            Command::new(&target).spawn().map_err(|e| e.to_string())?;
+            app.exit(0);
+            return Ok(());
+        }
+        LinuxInstall::Unpacked(dir) => {
+            // Unpack the new AppImage next to the old copy, swap the folders, start the new one.
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+            let work = file.parent().ok_or("No temporary folder")?;
+            let _ = std::fs::remove_dir_all(work.join("squashfs-root"));
+            run(Command::new(file).arg("--appimage-extract").current_dir(work), "Unpacking the update")?;
+            let old = dir.with_file_name("app.old");
+            let _ = std::fs::remove_dir_all(&old);
+            std::fs::rename(&dir, &old).map_err(|e| e.to_string())?;
+            if let Err(e) = std::fs::rename(work.join("squashfs-root"), &dir) {
+                let _ = std::fs::rename(&old, &dir);
+                return Err(e.to_string());
+            }
+            let _ = std::fs::remove_dir_all(&old);
+            Command::new(dir.join("AppRun")).spawn().map_err(|e| e.to_string())?;
+            app.exit(0);
+            return Ok(());
+        }
+        LinuxInstall::Pacman => {
+            // As the install script does: build the package from the .deb with the release's PKGBUILD.
+            let work = file.parent().ok_or("No temporary folder")?;
+            std::fs::copy(file, work.join("rembrandt.deb")).map_err(|e| e.to_string())?;
+            for e in std::fs::read_dir(work).map_err(|e| e.to_string())?.flatten() {
+                if e.file_name().to_string_lossy().contains(".pkg.tar") { let _ = std::fs::remove_file(e.path()); }
+            }
+            run(Command::new("makepkg").args(["-f", "--noconfirm"]).current_dir(work), "Building the package")?;
+            let pkg = std::fs::read_dir(work).map_err(|e| e.to_string())?.flatten().map(|e| e.path())
+                .find(|p| p.to_string_lossy().contains(".pkg.tar")).ok_or("makepkg made no package")?;
+            run(&mut as_root(&["pacman", "-U", "--noconfirm", &pkg.to_string_lossy()])?, "Installing")?;
+        }
+        LinuxInstall::Deb => {
+            let cmd = if have("apt-get") { vec!["apt-get", "install", "-y", f.as_str()] } else { vec!["dpkg", "-i", f.as_str()] };
+            run(&mut as_root(&cmd)?, "Installing")?;
+        }
+        LinuxInstall::Rpm => {
+            let cmd = if have("dnf") { vec!["dnf", "install", "-y", f.as_str()] }
+                else if have("zypper") { vec!["zypper", "--non-interactive", "install", "--allow-unsigned-rpm", f.as_str()] }
+                else { vec!["rpm", "-U", f.as_str()] };
+            run(&mut as_root(&cmd)?, "Installing")?;
+        }
+    }
+    // The package replaced the program on disk: start it again.
+    app.restart();
 }
 
 #[tauri::command]

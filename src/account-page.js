@@ -336,7 +336,11 @@ export function buildAccountPage(app, hooks) {
     const look = segmented([{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], getAppearance(), (v) => setAppearance(v));
     const rawQ = segmented([{ value: 0, label: 'Fast' }, { value: 3, label: 'Standard' }, { value: 4, label: 'Detailed' }], prefs.rawQuality, (v) => { prefs.rawQuality = v; savePrefs(); });
     const keys = segmented([{ value: 'rembrandt', label: 'Rembrandt' }, { value: 'lightroom', label: 'Lightroom' }], prefs.shortcuts || 'rembrandt', (v) => { prefs.shortcuts = v; savePrefs(); });
-    const prevQ = segmented([{ value: 1920, label: 'Fast' }, { value: 2560, label: 'Balanced' }, { value: 4096, label: 'Sharp' }], prefs.previewLong, (v) => { prefs.previewLong = v; savePrefs(); hooks.previewChanged(v); });
+    const prevQ = segmented([{ value: 0, label: 'Auto' }, { value: 1920, label: 'Fast' }, { value: 2560, label: 'Balanced' }, { value: 4096, label: 'Sharp' }], prefs.previewAuto !== false ? 0 : prefs.previewLong, (v) => {
+      prefs.previewAuto = !v;
+      if (v) prefs.previewLong = v;
+      savePrefs(); hooks.previewChanged(v);
+    });
     const fmt = segmented([{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }, { value: 'tiff', label: 'TIFF' }], exportDefaults.format, (v) => { exportDefaults.format = v; saveExportDefaults(); });
     const q = slider({ label: 'Export quality', min: 40, max: 100, def: 92, get: () => exportDefaults.quality, set: (v) => { exportDefaults.quality = v; }, commit: saveExportDefaults });
     const perfSeg = segmented(Object.entries(MODES).map(([value, m]) => ({ value, label: m.label })), prefs.perf || 'balanced', (v) => { prefs.perf = v; savePrefs(); });

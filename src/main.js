@@ -1383,6 +1383,26 @@ app.cameraMatch = {
   },
 };
 
+// The working size for this graphics card: the largest whose full-quality frame (MAIN at the
+// preview size) stays under about 90 ms and whose frame while dragging (half that size) under about
+// 25 ms. Timed once per graphics card and remembered.
+const PREVIEW_SIZES = [2560, 1920, 1600, 1280];   // 1280: about the width of a 2010 laptop screen
+function autoPreviewLong(engine) {
+  const gl = engine.gl, dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  const key = 'rembrandt:gpu-speed:2';
+  let msPerMP = null;
+  try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c?.gpu === gpu) msPerMP = c.msPerMP; } catch { /* ignore */ }
+  if (msPerMP == null) {
+    try { msPerMP = engine.benchmark(); } catch { msPerMP = 0; }
+    try { localStorage.setItem(key, JSON.stringify({ gpu, msPerMP })); } catch { /* ignore */ }
+  }
+  const mp = (long) => (long * long / 1.5) / 1e6;
+  const pick = PREVIEW_SIZES.find((l) => msPerMP * mp(l) <= 90 && msPerMP * mp(l / 2) <= 25) || PREVIEW_SIZES.at(-1);
+  console.info(`Graphics: ${gpu}, ${msPerMP.toFixed(1)} ms per megapixel: working size ${pick} px`);
+  return pick;
+}
+
 // A learned camera look corrects Rembrandt's own RAW rendering, so it only applies to the rendering it
 // was learned on; RAW_BASE changes with that rendering (0.3.16: the RGB tone curve) and older looks
 // are then learned again.
@@ -2773,7 +2793,7 @@ const accountHooks = {
   accountChanged: async () => { await startSync(); paintTopAvatar(); },
   cloud: cloud.cloud,
   clearLibrary: () => removePhotos(app.images.map((e) => e.id)),
-  previewChanged: (v) => app.engine.setPreviewLong(v).then(() => app.requestRender()),
+  previewChanged: (v) => app.engine.setPreviewLong(v || autoPreviewLong(app.engine)).then(() => app.requestRender()),
   restoreBackup: async (data) => {
     if (!data || !['Rembrandt', 'photography.work', 'Lumen'].includes(data.app) || !Array.isArray(data.photos)) throw new Error('not a backup from this app');
     for (const a of data.albums || []) await albums.mergeRemoteAlbum({ ...a, updatedAt: Math.max(a.updatedAt || 0, 1) });
@@ -3019,7 +3039,7 @@ function boot() {
     $('btnOpenEmpty').hidden = true;
     return;
   }
-  app.engine.previewLong = prefs.previewLong;
+  app.engine.previewLong = prefs.previewAuto !== false ? autoPreviewLong(app.engine) : prefs.previewLong;
   paintAvatar($('avatar'));
   if (isTouch) {
     $('emptyTitle').innerHTML = 'Open photos to start <em>editing</em>';

@@ -147,8 +147,15 @@ export function sceneTone(rgb, c = SCENE_CONTRAST) {
   return [Lo + (r - lo) * k, Lo + (g - lo) * k, Lo + (b - lo) * k];
 }
 
-// Display-referred sRGB (linear light) -> scene-linear Rec.2020, as the GPU input stage does.
-export const displayToScene = (srgbLinear) => mul3(SRGB_TO_REC2020, srgbLinear).map((v) => toneInv(v));
+// Display-referred sRGB (linear light) -> scene-linear Rec.2020, as the GPU input stage does: the exact
+// inverse of RGB tone (largest and smallest channel through the inverse curve, the middle in proportion).
+export function displayToScene(srgbLinear) {
+  const d = mul3(SRGB_TO_REC2020, srgbLinear).map((v) => Math.min(Math.max(v, 0), 1));
+  const hi = Math.max(...d), lo = Math.min(...d), H = toneInv(hi), L = toneInv(lo);
+  if (hi - lo < 1e-9) return [H, H, H];
+  const k = (H - L) / (hi - lo);
+  return d.map((v) => L + (v - lo) * k);
+}
 
 // ------------------------------------------------------------------ white balance: CAT16 + illuminants
 

@@ -52,7 +52,10 @@ export class Engine {
       premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance',
     });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
-    if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This GPU/browser cannot render to floating-point textures (EXT_color_buffer_float).');
+    // Rendering to float textures: 32- and 16-bit (EXT_color_buffer_float), or on some older drivers
+    // only 16-bit (EXT_color_buffer_half_float), which every working target already uses.
+    this.fullFloat = !!gl.getExtension('EXT_color_buffer_float');
+    if (!this.fullFloat && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This GPU/browser cannot render to floating-point textures.');
     this.gl = gl;
     this.canvas = canvas;
     this.maxTex = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
@@ -63,7 +66,7 @@ export class Engine {
       pre: this.program(PRE), main: this.program(MAIN), final: this.program(FINAL),
     };
     // Guided-filter statistics need variance precision: 32-bit floats when the GPU can filter them.
-    this.statFmt = gl.getExtension('OES_texture_float_linear') ? gl.RGBA32F : gl.RGBA16F;
+    this.statFmt = this.fullFloat && gl.getExtension('OES_texture_float_linear') ? gl.RGBA32F : gl.RGBA16F;
     this.curve = this.texture(256, 1, gl.RGBA16F, false);
     this.curveKey = '';
     this.dummy = this.texture(1, 1, gl.RGBA8, false);
@@ -199,6 +202,29 @@ export class Engine {
   get srcGain() { return this.source?.gain || 1; }
   get linear() { return this.source?.kind === 'linear'; }
   get workH() { return this.L?.h || 1; }
+
+  // How fast this GPU runs the heaviest everyday pass (MAIN with tone zones, mixer and grading on), in
+  // milliseconds per megapixel, timed with a round trip to the GPU. The editor picks its working size
+  // from it, so a 2010 graphics card gets a size it can keep up with.
+  benchmark() {
+    const gl = this.gl, w = 1024, h = 768, t = this.target(w, h), px = new Float32Array(4);
+    const z = new Float32Array(8).fill(0.2);
+    const u = {
+      uPre: this.dummy, uGuideAB: this.dummy, uTexel: [1 / w, 1 / h], uGuideOn: 1, uTone: [0.2, 0.3, -0.3, 0.1], uClarity: 0.2,
+      uWBOn: 1, uWB: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), uVib: 0.2, uSat: 0.1, uMixOn: 1, uMixHue: z, uMixSat: z, uMixLum: z, uGradeOn: 1,
+      uZoneW: new Float32Array(16).fill(0.5), uZoneA: new Float32Array(8).fill(1),
+    };
+    // A float target is read back as floats (an 8-bit read is an error and wouldn't wait for the GPU).
+    const sync = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px); };
+    this.draw(this.P.main, u, t); sync();   // compile and warm up
+    const t0 = performance.now();
+    for (let i = 0; i < 3; i++) this.draw(this.P.main, u, t);
+    sync();
+    const ms = (performance.now() - t0) / 3;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.free(t);
+    return ms / ((w * h) / 1e6);
+  }
 
   levelSize(kind) {
     const long = Math.max(this.fullW, this.fullH);
@@ -532,6 +558,7 @@ export class Engine {
       uToImage: v.toImage, uToCrop: v.toCrop,
       uCropTest: v.cropTest ? 1 : 0,
       uClip: v.clip ? 1 : 0,
+      uDither: v.float ? 0 : 1,
       uOverlay: v.overlayId ? 1 : 0,
       uBg: v.bg || [0.07, 0.075, 0.085],
       uInSize: [this.L.w, this.L.h],
@@ -584,7 +611,7 @@ export class Engine {
     const lod = out.mip ? Math.max(0, Math.log2(this.L.h / v.scale)) : 0;
     if (v.float) {
       // 16-bit exports: the final pass into a float target, read back as floats (0–1, display-encoded).
-      const t = this.target(w, h, { fmt: gl.RGBA32F });
+      const t = this.target(w, h, { fmt: this.fullFloat ? gl.RGBA32F : gl.RGBA16F });
       try {
         this.draw(this.P.final, this.finalUniforms(p, out, { ...v, lod, clip: false, overlayId: null }), t);
         const px = new Float32Array(w * h * 4);
