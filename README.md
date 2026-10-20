@@ -1,4 +1,5 @@
 <p align="center"><img src="brand/app-icon.svg" width="128" alt="Rembrandt app icon"></p>
+<p align="center"><a href="https://github.com/thesnarkitecht/rembrandt/stargazers"><img src="https://img.shields.io/github/stars/thesnarkitecht/rembrandt?style=flat&color=c98f4f" alt="GitHub stars"></a> <a href="https://github.com/thesnarkitecht/rembrandt/releases/latest"><img src="https://img.shields.io/github/v/release/thesnarkitecht/rembrandt?color=8a5829" alt="Latest release"></a> <img src="https://img.shields.io/badge/licence-GPL--3.0-6a4019" alt="GPL-3.0"></p>
 <h1 align="center">Rembrandt</h1>
 <p align="center"><b>Stop paying for Adobe. Flush the incrapification.</b></p>
 <p align="center">A free photo editor for macOS, Windows and Linux.<br>
@@ -87,6 +88,14 @@ checks it against the published SHA-256 sums, and restarts the server.
   (Settings › Performance). The queue survives restarts.
 - **Merge**: HDR from brackets, panoramas and focus stacks, each to a RAW-like DNG.
 - **RAW** from 1,000+ cameras, developed on the GPU: tone, colour, curves, grading, dehaze, detail.
+  Default colour measured against Camera Raw on test charts, and the tone sliders (Highlights,
+  Shadows, Whites, Blacks) are broad, overlapping zones fitted to how Lightroom's move each tone, so
+  adjustments blend into the light around them, without halos, banding or hue shifts. A 24 MP RAW is
+  ready to edit in a second or two (half size first, full size in the background), and going back to
+  one you just had open is instant.
+- **Made for old computers too**: Rembrandt times your graphics card once and picks a working size it
+  can keep up with, works at half size while a slider moves, and needs only WebGL 2 (OpenGL 3.3-class
+  graphics).
 - **Looks**: film-style colour (Portrait 400, Vivid 50, Chrome, Tungsten 800, Matte, Pan 400 B&W) with
   an Amount slider, and your own 3D LUTs: import any `.cube` file once and use it on every photo.
 - **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth, and
@@ -95,6 +104,8 @@ checks it against the published SHA-256 sums, and restarts the server.
   (a small inpainting network that runs on any computer's CPU, no upload). **People in the background**
   finds and removes passers-by in one click and keeps your subject. Heal and Clone copy from a matching
   part of the photo. **Remove blemishes** heals spots on portraits in one click and keeps moles and beauty marks.
+  **Visualize spots** shows sensor dust and specks as white on black; **Color speckles** (Detail)
+  clears red and other colour dots at small high-contrast points that noise reduction can't reach.
 - **Portraits**: Smooth skin, Light the face, Brighten eyes, Define irises and Whiten teeth, each one
   slider on an AI People mask you can fine-tune in Masks.
 - **Edit like me**: after a few edits, Rembrandt edits a new photo the way you would. It learns from
@@ -109,7 +120,8 @@ checks it against the published SHA-256 sums, and restarts the server.
   **Compare** (C) shows 2–4 frames side by side with zoom and pan linked.
 - **Lens corrections**: the camera's built-in profile from Fujifilm and Sony RAWs, or one of 1,500
   lens profiles from [Lensfun](https://lensfun.github.io) (distortion, vignetting, chromatic
-  aberration), plus manual distortion and vignetting for any photo. Auto straighten levels horizons;
+  aberration), plus manual distortion and vignetting for any photo, and **Auto distortion** for lenses
+  with no profile, which straightens the photo's straight lines. Auto straighten levels horizons;
   Transform's Vertical and Horizontal fix converging lines, and Auto makes a building's verticals parallel.
 - **On-device AI**: Refocus, background replacement. Nothing is uploaded.
 - **Smart search**: type “dog on the beach” or “red car” and find the photos, with no keywording.
