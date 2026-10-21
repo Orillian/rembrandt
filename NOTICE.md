@@ -7,6 +7,7 @@
 | `src/vendor/mediapipe/` | MediaPipe Tasks Vision 1.0.1, Apache-2.0 |
 | `models/*.tflite` | MediaPipe / Google models, Apache-2.0 (see `models/README.md`) |
 | `models/sr-general-x4.bin` | Real-ESRGAN compact general models, BSD-3-Clause (`models/LICENSE-Real-ESRGAN`) |
+| `src/vendor/needle/`, `models/needle3.cact` | Needle 3 (Cactus Compute), engine 3.1.0 and weights, Apache-2.0 (`models/LICENSE-Needle`) |
 | `src/vendor/ort/` | ONNX Runtime Web 1.22.0 (WebAssembly build), MIT, © Microsoft Corporation (`src/vendor/ort/LICENSE`) |
 | `models/inpaint-migan.onnx` | MI-GAN inpainting (Picsart AI Research), MIT (`models/LICENSE-MI-GAN`) |
 | `src/vendor/nsfw/` | TensorFlow.js 4.22.0, Apache-2.0; NSFWJS 4.3.0 model, MIT (see `src/vendor/nsfw/README.md`) |
@@ -37,6 +38,11 @@ under the Apache License 2.0 (`src/vendor/nsfw/LICENSE-tfjs`). `model.json` and
 `group1-shard1of1.bin` are the MobileNetV2 model from NSFWJS 4.3.0, © 2019 Infinite Red, Inc.,
 licensed under the MIT License (`src/vendor/nsfw/LICENSE-nsfwjs`), converted from the package's
 JavaScript copies without changing the weights.
+
+## Needle 3 (Apache-2.0)
+The words box's language model: the Needle 3 WebAssembly engine (`src/vendor/needle/`) and weights
+(`models/needle3.cact`), unmodified, from https://huggingface.co/Cactus-Compute/needle3. Copyright (c)
+2026 Cactus Compute, Inc., licensed under the Apache License 2.0 (`models/LICENSE-Needle`).
 
 ## Published methods used by the Rembrandt Engine
 The engine is an independent implementation of published methods: sRGB (IEC 61966-2-1), ITU-R

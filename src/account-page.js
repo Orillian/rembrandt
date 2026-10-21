@@ -438,7 +438,7 @@ export function buildAccountPage(app, hooks) {
     return [
       card('AI', aiSwitch.el,
         el('p', { class: 'hint' }, ai
-          ? 'Masks found by AI, Generative Remove and Expand, AI Denoise, Super Resolution, the AI panel, face sculpting, smart search and Edit like me. Every model runs on this device; nothing is uploaded.'
+          ? 'Masks found by AI, Generative Remove and Expand, AI Denoise, Super Resolution, the AI panel, face sculpting, smart search, Edit like me, and the language model that reads what you type in the words box (Needle 3). Every model runs on this device; nothing is uploaded.'
           : 'AI is off. Its tools are hidden and no model is downloaded or run. AI adjustments already on your photos are kept, and show again when you turn AI back on.'),
         ai ? null : el('p', { class: 'hint' }, 'The check that runs before a photo is synced to Cloud stays on while Cloud sync is on.')),
       card('Panels',

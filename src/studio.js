@@ -134,6 +134,14 @@ export function createStudio(app) {
     return { el: el('div', { class: 'sw-row' }, el('span', { class: 'sw-label' }, label), track, val), set };
   }
 
+  // While a request is being read (by the language model, which can take a moment).
+  function thinking(q) {
+    finishing?.();
+    work.replaceChildren();
+    mode('think', 'Thinking');
+    speak(`“${q}”`, 'quote');
+  }
+
   // Runs one request: think, then make each change in turn, then settle. `commit` stores it.
   let job = 0, finishing = null;
   async function perform(q, next, commit) {
@@ -228,5 +236,5 @@ export function createStudio(app) {
     speak('What should this photo feel like?', 'ask');
   }
 
-  return { el: root, perform, record, hello };
+  return { el: root, perform, record, hello, thinking };
 }

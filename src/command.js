@@ -1,6 +1,8 @@
 // ⌘K: say what you want. Plain words become edits ("warmer and a bit brighter", "moody", "blur the
 // background"), previewed on the photo as you type; anything else finds the control ("vignette",
-// "temperature") and takes you to it. Runs on this device: a small vocabulary, no language model.
+// "temperature") and takes you to it. Runs on this device. Exact requests ("shadows +25") and the
+// live preview use the rules below; when AI is on, what you send is also read by Needle 3, a small
+// on-device language model (ai/needle.js), which understands looser phrasing.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 import { el, clamp, clone, deepMerge, getPath, setPath } from './util.js';
 import { HSL_NAMES } from './params.js';
@@ -13,6 +15,7 @@ import { createStudio } from './studio.js';
 import { measureTilt, straightened } from './tool-crop.js';
 import { isTauri } from './platform.js';
 import { aiOn, shown, onWorkspaceChange } from './workspace.js';
+import { warmNeedle, needleCalls, needleState, applyCalls } from './ai/needle.js';
 
 const c100 = (v) => clamp(Math.round(v), -100, 100);
 const add = (key, d, lo = -100, hi = 100) => (p, k) => ({ [key]: clamp(Math.round((p[key] + d * k) * 100) / 100, lo, hi) });
@@ -20,6 +23,15 @@ const ai = (key, field, v) => (p, k) => ({ ai: { [key]: { [field]: clamp(Math.ro
 
 // [pattern, label, change(params, strength) → patch]. Earlier entries win.
 const INTENTS = [
+  // A problem, not an instruction: "too dark" brightens, "too saturated" calms the colour.
+  [/\btoo (dark|dim)\b|\bunder-?exposed/, 'Brighter', add('exposure', 0.3, -5, 5)],
+  [/\btoo bright\b|\bover-?exposed/, 'Darker', add('exposure', -0.3, -5, 5)],
+  [/\btoo (saturated|colou?rful|vivid)\b|\boversaturated/, 'Less colour', add('saturation', -20)],
+  [/\btoo (warm|orange|yellow)\b/, 'Cooler', add('temp', -12)],
+  [/\btoo (cold|cool|blue)\b/, 'Warmer', add('temp', 12)],
+  [/\bdull\b/, 'Vibrance', add('vibrance', 20)],
+  [/\b(remove|cut|reduce|clear)\b.*\b(haze|fog|mist)\b/, 'Dehaze', (p, k) => add('dehaze', 15)(p, Math.abs(k))],
+  [/\bdark(en)? (the )?(edges|corners)|\bvignette/, 'Vignette', (p, k) => ({ vignette: { amount: c100(p.vignette.amount - 20 * k) } })],
   [/\bshadows?\b|\bdetail in the dark/, 'Shadows', (p, k) => ({ shadows: c100(p.shadows + 30 * k) })],
   [/\bhighlights?\b|\bsky\b|\bblown|\brecover/, 'Highlights', (p, k) => ({ highlights: c100(p.highlights - 30 * k) })],
   [/\bblur (the )?background|\bbokeh|\bportrait mode|\bdepth of field/, 'Lens blur', ai('blur', 'amount', 55)],
@@ -103,6 +115,8 @@ const DOWN = /\b(down|decrease|lower|reduce|drop|less|minus|subtract|cut|darker|
 const RESET = /\b(reset|zero|clear|remove|no|none|neutral|off)\b/;
 // One clause → { path, label, value, lo, hi, dp, says } with `value` the new slider value, or null.
 function exact(s, p) {
+  // "remove the haze" means Dehaze, not the Haze slider back to zero.
+  if (/\b(remove|cut|reduce|clear)\b.*\b(haze|fog|mist)\b/.test(s) && !/\d/.test(s)) return null;
   let path, label, lo = -100, hi = 100, dp = 0;
   const hue = HUES.findIndex((re) => re.test(s)), part = HSL_PART.find(([re]) => re.test(s));
   if (hue >= 0 && part && !/\bwhite balance\b/.test(s)) {
@@ -142,16 +156,32 @@ function exact(s, p) {
 }
 const fmtV = (v, dp) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(dp)}`;
 
-// Words → { patch, labels } against `p`, or null when nothing is understood.
-export function interpret(text, p) {
+// The clauses a request splits into, as interpret reads them.
+export function clausesOf(text) {
+  return digits(text.toLowerCase().replace(/black and white/g, 'b&w'))
+    .replace(/(\d(?:\.\d+)?\s*(?:%|points?|pts?|stops?|ev)?)\s+(?=[a-z])(?!(?:points?|pts?|stops?|ev|brighter|darker|warmer|cooler|up|down|higher|lower)\b)/g, '$1, ')
+    .split(/,|;|\band\b|\bbut\b|\bthen\b|\bwith\b|\s\+\s/).map((c) => c.trim()).filter(Boolean);
+}
+// Is this clause an exact request ("shadows +25") the rules should answer without the model?
+export const isExact = (clause, p) => !!exact(clause, p);
+
+// Words → { next, labels } against `p`, or null when nothing is understood. `smart`: Needle's calls
+// per clause (from clausesOf), used where the clause isn't an exact request.
+export function interpret(text, p, smart = null, aspect = 1.5) {
   let next = clone(p), labels = [];
   const t = digits(text.toLowerCase().replace(/black and white/g, 'b&w'))
     // "exposure +0.5 contrast 20": a number followed by another control starts a new clause.
     .replace(/(\d(?:\.\d+)?\s*(?:%|points?|pts?|stops?|ev)?)\s+(?=[a-z])(?!(?:points?|pts?|stops?|ev|brighter|darker|warmer|cooler|up|down|higher|lower)\b)/g, '$1, ');
-  for (const clause of t.split(/,|;|\band\b|\bthen\b|\bwith\b|\s\+\s/)) {
+  for (const clause of t.split(/,|;|\band\b|\bbut\b|\bthen\b|\bwith\b|\s\+\s/)) {
     const s = clause.trim();
     if (!s) continue;
     const x = exact(s, next);
+    const calls = !x && smart?.get(s);
+    if (calls?.length) {
+      const r = applyCalls(calls, next, aspect, Math.abs(strength(s)));
+      next = r.next; labels.push(...r.labels);
+      continue;
+    }
     if (x && x.path.startsWith('ai.') && !aiOn()) continue;   // AI is off (Settings → Workspace)
     if (x) {
       setPath(next, x.path, x.value);
@@ -213,7 +243,7 @@ let tiltMemo = { key: '', t: null };   // the tilt measurement is slowish; once 
 
 // Everything a request asks for, against `p`: pasted edits first, then the words on top.
 // → { next, labels } | { error } | null.
-export function understand(app, text, p) {
+export function understand(app, text, p, smart = null) {
   const words = [];
   let next = p, labels = [];
   for (const clause of text.split(/,|;|\band\b|\bthen\b/i)) {
@@ -233,7 +263,7 @@ export function understand(app, text, p) {
     next = batch.pasteEdits(next, src.clip, app.img?.aspect || 1.5);
     labels.push(src.label);
   }
-  const it = words.join(', ').trim() ? interpret(words.join(', '), next) : null;
+  const it = words.join(', ').trim() ? interpret(words.join(', '), next, smart, app.img?.aspect || 1.5) : null;
   if (it) { next = it.next; labels = labels.concat(it.labels); }
   return labels.length ? { next, labels } : null;
 }
@@ -292,8 +322,21 @@ export function createCommandBar(app, mount = null) {
   }
 
   // Words in the studio: Rembrandt thinks, then makes each change on the photo in turn.
-  function ask(q) {
-    const it = understand(app, q, app.params);
+  async function ask(q) {
+    let smart = null;
+    // Needle reads each clause the rules can't take exactly (see ai/needle.js); while it is still
+    // loading, the first request waits for it a little.
+    if (aiOn() && needleState() !== 'failed') {
+      studio.thinking(q);
+      smart = new Map();
+      const base = app.params;
+      for (const c of clausesOf(q)) {
+        if (isExact(c, base) || /\bstraighten|\blevel\b|\bcrooked|\btilt|\bhorizon|\bpaste|\bsame as|\bmatch\b|\bcopy\b/.test(c)) continue;
+        const calls = await Promise.race([needleCalls(c, { wait: true }), new Promise((r) => setTimeout(() => r(null), 25000))]);
+        if (calls) smart.set(c, calls);
+      }
+    }
+    const it = understand(app, q, app.params, smart);
     if (!it || it.error) { studio.record(q, it?.error || 'I don’t know that one yet. Try “exposure +0.3”, “warmer” or “paste the edits from the previous photo”.', app.params, app.params); return; }
     studio.perform(q, it.next, () => {
       app.preview = null;
@@ -414,7 +457,7 @@ export function createCommandBar(app, mount = null) {
     app.requestRender();
   }
   if (mount) {
-    input.addEventListener('focus', () => { if (!active) open(); });
+    input.addEventListener('focus', () => { if (!active) open(); warmNeedle(); });
     input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) close(); }, 120));
     list.addEventListener('pointerdown', (e) => e.preventDefault());   // keep focus while clicking a row
   }

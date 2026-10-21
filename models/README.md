@@ -58,3 +58,14 @@ checked against SHA-256 and kept in the browser's cache. Runs on the CPU through
 | `vision_model_quantized.onnx`, `text_model_int8.onnx`, `tokenizer.json` | Smart search: OpenAI CLIP ViT-B/32 (Radford et al. 2021), image and text encoders, ONNX conversion and quantization by Xenova | `huggingface.co/Xenova/clip-vit-base-patch32` at `d15189d7028b43f1d3e65039190477f6af591c2a` |
 
 Self-hosters can serve the same three files themselves and set `clipBase` in `window.LUMEN_CONFIG`.
+
+## Edit with words
+
+Runs in a worker through the model's own WebAssembly engine (`src/ai/needle-worker.js`), only while
+AI is on.
+
+| File | Purpose | Source (Apache-2.0) |
+|---|---|---|
+| `needle3.cact` | Needle 3 (Cactus Compute), 20 layers: reads what you type in the words box and picks edits (`src/ai/needle.js`) | `huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact` |
+
+Copyright (c) 2026 Cactus Compute, Inc., under the Apache License 2.0 (`LICENSE-Needle`).

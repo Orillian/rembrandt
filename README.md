@@ -71,8 +71,10 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Ask in words**: type “warmer and a bit brighter”, “down exposure by ten points”, “shadows +25”
   or “paste the edits from the previous photo” (Ctrl/⌘ K), or say it: press the microphone in the
   side panel and say “bring lens blur down”. A small Rembrandt in dots thinks it over,
-  then makes each change while you watch the sliders move. It runs on your device: a vocabulary, not
-  a language model.
+  then makes each change while you watch the sliders move. It understands everyday phrasing too
+  (“the sky is too white”, “it looks too yellow”, “start over”) through
+  [Needle 3](https://huggingface.co/Cactus-Compute/needle3), a 36 MB language model that runs on your
+  device; exact requests like “shadows +25” never need it, and with AI off the words still work.
 - **Edit the photo itself**: drag up or down on any part of the picture to lighten or darken that
   tone, left or right to change that colour; the sliders follow.
 - **AI looks**: Enhance, Relight, Sky (deepen it, or replace it with a clear, cloudy, golden-hour,
@@ -159,7 +161,7 @@ checks it against the published SHA-256 sums, and restarts the server.
 | **What it is** | A RAW developer and photo library, in the same family as Lightroom Classic: develop, adjust, mask, retouch, organise and export your own photos. Every edit is non-destructive. |
 | **What it isn't** | A layer-based pixel editor like Photoshop or GIMP (no layers, text or painting), or a generative AI tool: it doesn't make images from a prompt or invent new objects. Its AI effects (fog, sun rays, lens blur, background replacement with a picture you choose) are built from each photo's own depth and subject. |
 | **The AI** | Selects people, faces, subjects, objects and depth for masks, removes blemishes, denoises, refocuses, upscales and picks your best shots. It all runs on your computer. |
-| **Typing or talking** | You can ask for edits in words ("warmer", "lens blur down") or by voice. It understands editing terms, not general requests. |
+| **Typing or talking** | You can ask for edits in words ("warmer", "the sky is too white", "lens blur down") or by voice. It understands photo edits, not general requests. |
 | **Your photos** | Stay on your computer. Originals are never changed; edits are saved as standard XMP that Lightroom and darktable read. |
 | **Cost** | Free, no account. There is no Rembrandt Cloud or sync service yet. |
 | **Runs on** | macOS, Windows and Linux, or self-hosted and used in any browser. |
