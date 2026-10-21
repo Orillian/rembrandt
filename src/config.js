@@ -41,6 +41,10 @@ const DEFAULTS = {
   // Smart search model files (src/ai/clip.js): defaults to the pinned Hugging Face revision; a
   // self-hosted copy can serve them from its own folder, e.g. 'models/clip/'.
   clipBase: '',
+
+  // The Rembrandt API (rembrandt-cloud/api): Send feedback, product-update sign-ups and the opt-in
+  // anonymous usage counts. Empty turns all three off (feedback then links to GitHub issues).
+  apiUrl: 'https://api.rembrandteditor.dev',
 };
 
 export const CONFIG = { ...DEFAULTS, ...(globalThis.LUMEN_CONFIG || {}), prices: { ...DEFAULTS.prices, ...(globalThis.LUMEN_CONFIG?.prices || {}) } };

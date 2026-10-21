@@ -24,6 +24,7 @@ import { MODES } from './jobs.js';
 import { isMobileApp, isTauri, isIOS } from './platform.js';
 import { unlockPanel, isUnlocked, freeSavesLeft, unlockPrice, onUnlockChange } from './unlock.js';
 import { buySubscription, syncStoreSubscriptions, manageStoreSubscription, loadStorePrices, storePrice, storeName, storePlatform, sellerName } from './subscriptions.js';
+import * as FB from './feedback.js';
 
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const SECTIONS = [
@@ -398,6 +399,7 @@ export function buildAccountPage(app, hooks) {
       card('Editing', field('RAW development', rawQ.el, 'Detailed is slower but resolves fine texture better.'), field('Preview resolution', prevQ.el, 'Sharp uses more graphics memory.'),
         field('Keyboard shortcuts', keys.el, 'Lightroom: P, X and U flag in Edit too, V black & white, K masks, Shift+P presets, ⌘K keywords, ⌘U auto, ⌘⇧R reset, ⌘⇧E export, ⌘⇧I import.')),
       WS.aiOn() ? smartCard() : null,
+      FB.apiAvailable() ? FB.updatesCard(card, app) : null,
       card('Performance',
         field('While you edit', perfSeg.el, 'How much of the graphics card background work may use while you work. Smooth editing gives it the smallest slices.'),
         field('Heavy AI work runs', whenSeg.el, 'AI Denoise, Super Resolution and merges. Away means no input for a minute, or Rembrandt in the background; it then runs at full speed.'),
@@ -476,7 +478,11 @@ export function buildAccountPage(app, hooks) {
       };
       try { await saveBlob(new Blob([JSON.stringify(d, null, 1)], { type: 'application/json' }), `photo-library-backup-${new Date().toISOString().slice(0, 10)}.json`); } catch (e) { if (e?.code !== 'declined') toast(`Backup failed: ${e.message}`); }
     }, 'sm', 'save');
-    const out = [card('Backup',
+    const usage = toggle('Share anonymous usage counts', () => FB.usageOn(), (v) => { FB.setUsage(v); render(); });
+    const privacyCards = FB.apiAvailable() ? [card('Usage counts', usage.el,
+      el('p', { class: 'hint' }, 'Tallies of which tools and exports get used, with the app version and operating system, sent at most every ten minutes. Never photos, file names, edits, places or anything about you. They help decide what to improve next.'),
+      el('div', { class: 'row-btns' }, button('Reset my install id', () => { FB.resetInstallId(); toast('A new random install id will be used'); }, 'sm ghost')))] : [];
+    const out = [...privacyCards, card('Backup',
       el('p', { class: 'lead' }, 'A backup holds your edits, ratings, flags and albums (not the photo files). Restore it on another device after importing the same photos.'),
       el('div', { class: 'row-btns' }, backup, button('Restore from backup…', () => fileIn.click(), 'sm ghost'), fileIn))];
     if (online()) {

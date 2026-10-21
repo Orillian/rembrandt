@@ -1386,3 +1386,17 @@ body.ws-no-studio .nav-ask { display: none; }
 .ws-tile.off { background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); }
 .ws-tile.off .ws-icon { color: var(--muted); }
 .ws-tile.fixed { cursor: default; opacity: 0.75; }
+
+/* Send feedback, product updates, and the one-time usage-counts ask (feedback.js). */
+.feedback-dlg { width: min(520px, calc(100vw - 32px)); }
+.feedback-body .lead { margin: 0; color: var(--text-2); font-size: 13px; }
+.feedback-text { width: 100%; min-height: 120px; resize: vertical; font: inherit; line-height: 1.45; padding: 10px 12px; box-sizing: border-box; }
+.check-row { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: var(--text-2); cursor: pointer; line-height: 1.4; }
+.check-row input { margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.feedback-note:empty { display: none; }
+.feedback-note a, .usage-ask a { color: var(--accent); }
+.updates-row { gap: 8px; }
+.updates-row .text-input { flex: 1; min-width: 0; }
+.usage-ask { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 850; width: min(340px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 4px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop); font-size: 13px; }
+.usage-ask b { font-size: 13.5px; }
+.usage-ask p { margin: 0; color: var(--text-2); line-height: 1.45; }

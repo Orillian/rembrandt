@@ -11,6 +11,7 @@ import { beforeAfterPage } from './beforeafter.js';
 import { recordReplay, replaySupported } from './replay.js';
 import { icon } from './icons.js';
 import { DESTINATIONS, destination, deliver } from './export-dest.js';
+import { track } from './feedback.js';
 
 const FORMATS = { jpeg: ['image/jpeg', '.jpg'], png: ['image/png', '.png'], webp: ['image/webp', '.webp'], tiff: ['image/tiff', '.tif'] };
 const SIZES = [
@@ -158,6 +159,7 @@ export async function renderPixels(app, { long = 0 } = {}, p = app.params, mats 
 
 // Renders `p` (default: the photo being edited) with the engine's current image.
 export async function renderExport(app, { format, quality, long, recipe, meta, tiffBits, hdr }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+  track('export', hdr ? `${format}-hdr` : format);
   if (format === 'tiff' && tiffBits !== 8) return renderTiff16(app, long, p, mats);
   const { image, outW, outH } = await renderPixels(app, { long }, p, mats);
   let canvas = el('canvas', { width: image.width, height: image.height });

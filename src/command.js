@@ -16,6 +16,7 @@ import { measureTilt, straightened } from './tool-crop.js';
 import { isTauri } from './platform.js';
 import { aiOn, shown, onWorkspaceChange } from './workspace.js';
 import { warmNeedle, needleCalls, needleState, applyCalls } from './ai/needle.js';
+import { track } from './feedback.js';
 
 const c100 = (v) => clamp(Math.round(v), -100, 100);
 const add = (key, d, lo = -100, hi = 100) => (p, k) => ({ [key]: clamp(Math.round((p[key] + d * k) * 100) / 100, lo, hi) });
@@ -337,6 +338,7 @@ export function createCommandBar(app, mount = null) {
       }
     }
     const it = understand(app, q, app.params, smart);
+    track('feature', smart?.size ? 'words-model' : 'words-rules');
     if (!it || it.error) { studio.record(q, it?.error || 'I don’t know that one yet. Try “exposure +0.3”, “warmer” or “paste the edits from the previous photo”.', app.params, app.params); return; }
     studio.perform(q, it.next, () => {
       app.preview = null;

@@ -80,6 +80,7 @@ import { signature, similarity, THRESHOLD as SIMILAR_THRESHOLD, MAX_RESULTS as S
 import { estimateAirlight } from '../engine/src/pipeline.js';
 import { shown, aiOn, onWorkspaceChange } from './workspace.js';
 import { hdrFromOne, HDR_ONE } from './hdr-one.js';
+import { openFeedback, track, askAboutUsage } from './feedback.js';
 
 const $ = (id) => document.getElementById(id);
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
@@ -227,6 +228,7 @@ const app = {
   setTool(t) {
     if (!this.img && t !== 'edit') return;
     if (t !== 'edit' && !shown(t)) return;   // hidden in Settings → Workspace
+    if (this.state.tool !== t) track('tool', t);
     if (this.state.tool === t && this.panel) return;
     this.state.tool = t;
     this.state.pick = null;
@@ -287,6 +289,7 @@ const app = {
   // ...enlarged or restored, and added to the library as a new photo next to the original.
   // Rendered now (one quick pass), enhanced as a background job (jobs.js) so editing stays smooth.
   async superResolution({ scale, denoise, when }) {
+    track('feature', `super-resolution-${scale}x`);
     const cur = this.images[this.cur];
     const image = await this.srSource();
     if (scale > this.srMaxScale(image)) throw new Error('This photo is too large to enlarge that much on this device');
@@ -312,6 +315,7 @@ const app = {
   // Generative Expand (expand.js): queued; a wider or taller DNG appears beside the original.
   expand(kind, id = this.images[this.cur]?.id) {
     if (!id) throw new Error('Open a photo first');
+    track('feature', `expand-${kind}`);
     const e = this.images.find((x) => x.id === id);
     this.toast(`Generative Expand (${EXPANDS[kind].label}): added to background work`);
     return addJob({ kind: 'expand', title: `Generative Expand · ${e?.name || ''}`, desc: { id, kind }, run: (job) => expandPhoto(id, kind, job) });
@@ -319,12 +323,14 @@ const app = {
   // HDR from one photo (hdr-one.js): queued; the fused linear DNG appears beside the original.
   hdrFromOne(strength = 'natural', id = this.images[this.cur]?.id) {
     if (!id) throw new Error('Open a photo first');
+    track('feature', `hdr-one-${strength}`);
     const e = this.images.find((x) => x.id === id);
     this.toast(`HDR from one photo (${HDR_ONE[strength].label}): added to background work`);
     return addJob({ kind: 'hdr-one', title: `HDR from one photo · ${e?.name || ''}`, desc: { id, strength }, run: (job) => hdrOnePhoto(id, strength, job) });
   },
   // AI Denoise (ai/denoise.js): queued; a denoised linear DNG appears beside each original.
   denoise({ strength = 0.5, ids, when } = {}) {
+    track('feature', 'ai-denoise');
     const list = ids || [this.images[this.cur]?.id].filter(Boolean);
     if (!list.length) throw new Error('Open a photo first');
     return list.map((id) => queueDenoise(id, strength, when));
@@ -1683,6 +1689,7 @@ async function select(i) {
   app.history.reset(params);
   app.updateUndo();
   app.img = { name: e.name, aspect, kind: e.kind, raw: e.raw };
+  track('photo_open', e.raw ? 'raw' : (e.kind || 'other'));
   await applySource(e);
   $('fileTitle').textContent = e.name;
   document.body.classList.add('has-image');
@@ -2394,6 +2401,7 @@ function frameFromBitmap(bitmap, long) {
   return { w, h, data };
 }
 function mergePhotos(ids, kind, when) {
+  track('feature', `merge-${kind}`);
   const M = MERGES[kind];
   if (ids.length < M.min) { app.toast(`Select at least ${M.min} photos`); return null; }
   const first = app.images.find((e) => ids.includes(e.id));
@@ -2916,6 +2924,13 @@ function applyWorkspace(first) {
 }
 onWorkspaceChange(() => applyWorkspace(false));
 applyWorkspace(true);
+
+// Usage counts (feedback.js, opt-in): one app open, uncaught errors by kind, and the one-time ask a
+// few minutes into the first session.
+track('app_open');
+window.addEventListener('error', (e) => track('error', e.error?.name || 'error'));
+window.addEventListener('unhandledrejection', (e) => track('error', e.reason?.name || 'rejection'));
+setTimeout(() => askAboutUsage(app), 3 * 60e3);
 const setNavSide = (on) => {
   document.body.classList.toggle('nav-off', !on);
   try { localStorage.setItem('rembrandt:navside', on ? '1' : '0'); } catch { /* ignore */ }
@@ -3000,6 +3015,7 @@ $('btnAccount').addEventListener('click', (e) => popMenu(e.currentTarget, [
   { sep: true },
   { label: 'Import photos…', icon: 'open', onClick: () => openImporter() },
   isTouch ? null : { label: 'Keyboard shortcuts', icon: 'keyboard', onClick: () => $('helpDialog').showModal() },
+  { label: 'Send feedback…', icon: 'send', onClick: () => openFeedback(app) },
 ]));
 // Rembrandt is free. With a donation page configured, a heart in the top bar links to it.
 function openSupport() {
