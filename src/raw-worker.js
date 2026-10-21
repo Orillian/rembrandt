@@ -73,7 +73,7 @@ function preview(src, w, h, gain, long = 1024) {
 }
 
 self.onmessage = async ({ data: msg }) => {
-  const { id, buffer, quality = 3, half = 0, preview: wantPreview = true } = msg;
+  const { id, buffer, quality = 3, half = 0, preview: wantPreview = true, long = 0 } = msg;
   const tIn = performance.now();
   try {
     const M = await (modPromise ||= createModule());
@@ -96,17 +96,31 @@ self.onmessage = async ({ data: msg }) => {
     const pv = wantPreview ? preview(src, w, h, gain) : null;
     const t2 = performance.now();
     const L = lut();
-    const out = new Uint16Array(w * h * 4);
-    for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
-      out[j] = L[src[i]];
-      out[j + 1] = L[src[i + 1]];
-      out[j + 2] = L[src[i + 2]];
-      out[j + 3] = 0x3c00;
+    // `long`: a small copy only (box-averaged to about that long edge), for analysis that doesn't need
+    // every pixel (Match my camera): much less to convert, send and upload.
+    const f = long && Math.max(w, h) > long ? Math.ceil(Math.max(w, h) / long) : 1;
+    const ow = Math.floor(w / f), oh = Math.floor(h / f);
+    const out = new Uint16Array(ow * oh * 4);
+    if (f === 1) {
+      for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
+        out[j] = L[src[i]];
+        out[j + 1] = L[src[i + 1]];
+        out[j + 2] = L[src[i + 2]];
+        out[j + 3] = 0x3c00;
+      }
+    } else {
+      const n = f * f;
+      for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
+        let r = 0, g = 0, b = 0;
+        for (let yy = 0; yy < f; yy++) { let i = ((y * f + yy) * w + x * f) * 3; for (let xx = 0; xx < f; xx++, i += 3) { r += src[i]; g += src[i + 1]; b += src[i + 2]; } }
+        const j = (y * ow + x) * 4;
+        out[j] = L[Math.round(r / n)]; out[j + 1] = L[Math.round(g / n)]; out[j + 2] = L[Math.round(b / n)]; out[j + 3] = 0x3c00;
+      }
     }
     M._lr_free();
     meta.decodeMs = Math.round(performance.now() - t0);
     meta.timing = { setup: Math.round(t0 - tIn), libraw: Math.round(t1 - t0), preview: Math.round(t2 - t1), convert: Math.round(performance.now() - t2) };
-    self.postMessage({ id, ok: true, w, h, meta, gain, data: out, preview: pv }, pv ? [out.buffer, pv.data.buffer] : [out.buffer]);
+    self.postMessage({ id, ok: true, w: ow, h: oh, meta, gain, data: out, preview: pv }, pv ? [out.buffer, pv.data.buffer] : [out.buffer]);
   } catch (err) {
     try { (await modPromise)?._lr_free(); } catch { /* ignore */ }
     self.postMessage({ id, ok: false, error: String(err?.message || err) });

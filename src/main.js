@@ -17,7 +17,7 @@ import { lensPass, chain, setBackgroundImage, hasBackgroundImage, quality as len
 import { refocusPass, refocusActive } from './ai/refocus.js';
 import { studioPass, motionPass } from './ai/studio.js';
 import { buildAIPanel } from './ai/panel-ai.js';
-import { decodeFile, decodeRawLinear, sampleData, thumbnail, ACCEPT, RAW_EXT } from './loader.js';
+import { decodeFile, decodeRawLinear, decodeCameraJpeg, sampleData, thumbnail, ACCEPT, RAW_EXT } from './loader.js';
 import * as folders from './folders.js';
 import { isPhotoName } from './folders.js';
 import { readXmpSettings, crsToParams, embeddedXmp, sidecarNames, buildXmp } from './xmp.js';
@@ -1350,7 +1350,7 @@ async function originalFile(e) {
 
 // Match my camera: learn the camera's colour from up to 12 of its RAWs in the library (the photo
 // being edited first), keep it in prefs per camera, and turn it on for this photo.
-const CAM_PHOTOS = 12;
+const CAM_PHOTOS = 8;   // more adds little: the fit settles by about six photos
 app.cameraMatch = {
   key: () => app.engine?.camKey || null,
   info: () => camLook(app.engine?.camKey),
@@ -1369,20 +1369,29 @@ app.cameraMatch = {
         if (f) files.push(f);
       }
       app.toast(`Learning your ${key}’s color from ${files.length} photo${files.length === 1 ? '' : 's'}…`);
+      // Each file is read once (its RAW and its camera JPEG come from the same bytes), the next one
+      // while this one develops.
+      const reads = new Map();
+      const read = (f) => { if (!reads.has(f)) reads.set(f, readable(f).catch(() => f)); return reads.get(f); };
+      read(files[0]);
       // Each RAW rendered with default settings on the editor's engine (borrowed: the viewer
-      // holds still), exactly as the editor would show it.
+      // holds still), exactly as the editor would show it, from a small develop (800 px: the fit
+      // looks at 160 px).
       app._borrowed = true;
       const render = async (file) => {
-        const lin = await decodeRawLinear(file, { quality: prefs.rawQuality, half: 1, background: true });
+        const f = await read(file), next = files[files.indexOf(file) + 1];
+        if (next) read(next);
+        const lin = await decodeRawLinear(f, { quality: prefs.rawQuality, half: 1, background: true, preview: false, long: 800 });
         if (cameraKey(lin.meta) !== key) return null;
         engineDirty = true;
-        await app.engine.setImage({ kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain }, computeStats({ data: lin.preview.data, w: lin.preview.w, h: lin.preview.h }));
+        await app.engine.setImage({ kind: 'linear', data: lin.data, w: lin.w, h: lin.h, gain: lin.gain }, {});
         app.engine.camKey = null;
-        app.engine.setLensProfile((await readLensProfile(file).catch(() => null)) || (lin.meta?.lens ? await lensfunProfile(lin.meta).catch(() => null) : null));
+        app.engine.setLensProfile((await readLensProfile(f).catch(() => null)) || (lin.meta?.lens ? await lensfunProfile(lin.meta).catch(() => null) : null));
         const aspect = lin.w / lin.h, p = defaultParams(aspect), w = 640, h = Math.round(w / aspect);
         return { data: app.engine.readPixels(p, w, h, { ...outputMatsFor(p, aspect, w, h), scale: h / p.geometry.crop.h, cropTest: true }), w, h };
       };
-      const r = await learnCamera(files, { render, decodeFile });
+      const cameraJpeg = async (file) => { const f = await read(file); reads.delete(file); return decodeCameraJpeg(f, 640); };
+      const r = await learnCamera(files, { render, decodeFile: cameraJpeg }, (x) => { if (x < 1) app.toast(`Learning your ${key}’s color… ${Math.round(x * files.length) + 1} of ${files.length}`); });
       if (!r) { app.toast('Not enough to learn from: these RAWs have no full-size camera JPEG inside'); return; }
       prefs.cameraLooks = { ...prefs.cameraLooks, [key]: { ...r, at: Date.now(), base: RAW_BASE } };
       savePrefs();
@@ -2244,7 +2253,8 @@ async function denoisePhoto(id, strength, job) {
   const base = e.name.replace(/\.[^.]+$/, '');
   const out = new File([dng], `${base}-Denoise.dng`, { type: 'image/x-adobe-dng', lastModified: e.lastModified || Date.now() });
   const [made] = (await importItems([{ file: out }], { open: false })) || [];
-  if (made && e.edited) touch(made, { params: clone(editOf(e)), edited: true, rating: e.rating, flag: e.flag });
+  // The open photo's edit may not be saved yet: it counts too.
+  if (made && (e.edited || app.images[app.cur] === e)) touch(made, { params: clone(editOf(e)), edited: true, rating: e.rating, flag: e.flag });
   if (made) { job.open = () => openInEditor(made.id); refreshThumbs([made]); }
   app.toast(`Denoised copy of “${e.name}” is ready`, made ? { action: { label: 'Open', onClick: () => openInEditor(made.id) } } : {});
   return { w: frame.w, h: frame.h };
@@ -2277,7 +2287,8 @@ async function expandPhoto(id, kind, job) {
   const base = e.name.replace(/\.[^.]+$/, '');
   const out = new File([dng], `${base}-Expand.dng`, { type: 'image/x-adobe-dng', lastModified: e.lastModified || Date.now() });
   const [made] = (await importItems([{ file: out }], { open: false })) || [];
-  if (made && e.edited) {
+  // The open photo's edit may not be saved yet: it counts too.
+  if (made && (e.edited || app.images[app.cur] === e)) {
     const p = withSettings(defaultParams(r.w / r.h), developSettings(editOf(e)), r.w / r.h);
     p.retouch = [];
     p.warp = { ...p.warp, strokes: [], faces: null };

@@ -120,14 +120,20 @@ async function decodeRaw(file) {
   return { bitmap: await createImageBitmap(c), kind: ext(file.name).toUpperCase(), raw: true, linear: lin };
 }
 
-async function decodeEmbedded(file) {
+// The camera's own JPEG inside a RAW, decoded small (about `long` pixels wide), or null.
+export async function decodeCameraJpeg(file, long) {
+  return decodeEmbedded(file, long).catch(() => null);
+}
+
+async function decodeEmbedded(file, long = 0) {
   const u8 = new Uint8Array(file.bytes || await file.arrayBuffer());
   const o = tiffOrientation(u8);
   const list = findJpegs(u8);
   for (const j of list.slice(0, 4)) {
     try {
-      const blob = file.slice(j.off, j.end, 'image/jpeg');
-      let bitmap = await createImageBitmap(blob, { imageOrientation: o ? 'none' : 'from-image', premultiplyAlpha: 'none' });
+      // From the bytes already read when there are any (slicing the File reads storage again).
+      const blob = file.bytes ? new Blob([u8.subarray(j.off, j.end)], { type: 'image/jpeg' }) : file.slice(j.off, j.end, 'image/jpeg');
+      let bitmap = await createImageBitmap(blob, { imageOrientation: o ? 'none' : 'from-image', premultiplyAlpha: 'none', ...(long ? { resizeWidth: long, resizeQuality: 'medium' } : {}) });
       bitmap = await orient(bitmap, o);
       return { bitmap, kind: ext(file.name).toUpperCase(), raw: true, rawPreview: true };
     } catch {
@@ -174,7 +180,7 @@ function lane(name) {
 // Demosaic of a camera RAW with LibRaw. Resolves {w, h, data (RGBA half floats), gain, meta, preview,
 // half}. `half: 1` decodes at half size without demosaicing (each 2 × 2 sensor block is one pixel):
 // about five times faster, and still larger than the editor's on-screen working size.
-export function decodeRawLinear(file, { quality = 3, half = 0, background = false, preview = true } = {}) {
+export function decodeRawLinear(file, { quality = 3, half = 0, background = false, preview = true, long = 0 } = {}) {
   const L = lane(background ? 'background' : half ? 'quick' : 'full');
   const run = async () => {
     const buffer = file.bytes ? file.bytes.slice(0) : await file.arrayBuffer();
@@ -182,7 +188,7 @@ export function decodeRawLinear(file, { quality = 3, half = 0, background = fals
     const id = ++seq;
     const r = await new Promise((resolve, reject) => {
       L.waiting.set(id, { resolve, reject });
-      w.postMessage({ id, buffer, quality, half, preview }, [buffer]);
+      w.postMessage({ id, buffer, quality, half, preview, long }, [buffer]);
     });
     r.half = !!half;
     return r;
