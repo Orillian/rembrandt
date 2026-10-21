@@ -141,3 +141,14 @@ export function downloadBlob(blob, name) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
+
+// Scrolls `node` into view inside its own scrolling panel only. (scrollIntoView also scrolls every
+// ancestor, the window's overflow-hidden layout included, which shifts the whole app.)
+export function revealIn(node, { center = false, behavior = 'auto' } = {}) {
+  let c = node?.parentElement;
+  while (c && !(c.scrollHeight > c.clientHeight && /(auto|scroll)/.test(getComputedStyle(c).overflowY))) c = c.parentElement;
+  if (!c) return;
+  const r = node.getBoundingClientRect(), cr = c.getBoundingClientRect();
+  const top = c.scrollTop + r.top - cr.top - (center ? (c.clientHeight - r.height) / 2 : 8);
+  c.scrollTo({ top: Math.max(0, top), behavior });
+}

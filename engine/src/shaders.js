@@ -82,7 +82,8 @@ float bump(float x, float c, float w) { float d = clamp((x - c) / w, -1.0, 1.0);
 // stopping at an edge, so adjustments blend into the light around them. Shapes (see ZONE_SHAPES in
 // pipeline.js): centre, width below, width above (negative = flat to that end), EV at +100, EV at −100.
 const ZONES = `
-uniform vec4 uZoneW[4];     // centre, width below, width above
+uniform vec4 uZoneW[4];     // centre, width below, width above (raising)
+uniform vec4 uZoneWn[4];    // the same, lowering
 uniform vec2 uZoneA[4];     // EV at +100, at −100
 float zoneWindow(float x, vec4 z) {
   float w = x < z.x ? z.y : z.z;
@@ -93,7 +94,7 @@ float zoneGain(float x, vec4 t) {
   float g = 0.0;
   for (int i = 0; i < 4; i++) {
     float v = t[i];
-    g += v * (v > 0.0 ? uZoneA[i].x : uZoneA[i].y) * zoneWindow(x, uZoneW[i]);
+    g += v > 0.0 ? v * uZoneA[i].x * zoneWindow(x, uZoneW[i]) : v * uZoneA[i].y * zoneWindow(x, uZoneWn[i]);
   }
   return g;
 }

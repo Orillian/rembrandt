@@ -4,7 +4,10 @@ const KEY = 'lumen:prefs';
 const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse) and (max-width: 1100px)').matches;
 export const prefs = (() => {
   // previewAuto: the working size is picked from how fast the graphics card is (see autoPreviewLong).
-  const d = { name: '', rawQuality: 3, previewLong: phone ? 1920 : 2560, previewAuto: true };
+  // Older computers (two cores or less, or 4 GB or less) develop RAWs with the fast demosaic by default:
+  // about half the time of Standard, a little softer in fine detail. Settings can change it.
+  const low = typeof navigator !== 'undefined' && ((navigator.hardwareConcurrency || 4) <= 2 || (navigator.deviceMemory || 8) <= 4);
+  const d = { name: '', rawQuality: low ? 0 : 3, previewLong: phone ? 1920 : 2560, previewAuto: true };
   try { return { ...d, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return d; }
 })();
 export function savePrefs() {

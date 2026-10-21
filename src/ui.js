@@ -132,7 +132,13 @@ export function toggle(label, get, onChange) {
 
 let openMenu = null;
 export function closeMenu() {
-  if (openMenu) { openMenu.remove(); openMenu = null; }
+  if (openMenu) { openMenu._off?.(); openMenu.remove(); openMenu = null; }
+}
+// Opening a dialog closes any menu still open behind it.
+if (typeof HTMLDialogElement !== 'undefined' && !HTMLDialogElement.prototype._menuSafe) {
+  const showModal = HTMLDialogElement.prototype.showModal;
+  HTMLDialogElement.prototype.showModal = function (...a) { closeMenu(); return showModal.apply(this, a); };
+  HTMLDialogElement.prototype._menuSafe = true;
 }
 // Small popover menu anchored to a button. items: [{label, icon, onClick}]
 export function popMenu(anchor, items) {
@@ -151,6 +157,24 @@ export function popMenu(anchor, items) {
   m.style.top = `${r.bottom + mh + 6 > window.innerHeight ? r.top - mh - 6 : r.bottom + 6}px`;
   openMenu = m;
   setTimeout(() => window.addEventListener('pointerdown', (e) => { if (!m.contains(e.target)) closeMenu(); }, { once: true }), 0);
+  // Keyboard: Escape closes (and nothing else hears it), arrows move between items, Tab leaves.
+  const btns = () => [...m.querySelectorAll('.menu-item:not(:disabled)')];
+  const onKey = (e) => {
+    if (openMenu !== m) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); anchor.focus?.(); return; }
+    if (e.key === 'Tab') { closeMenu(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      e.preventDefault(); e.stopPropagation();
+      const list = btns(), i = list.indexOf(document.activeElement);
+      const j = e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length;
+      list[i < 0 && e.key === 'ArrowUp' ? list.length - 1 : i < 0 && e.key === 'ArrowDown' ? 0 : j]?.focus();
+    }
+  };
+  const onAway = () => { if (openMenu === m) closeMenu(); };
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', onAway);
+  window.addEventListener('resize', onAway);
+  m._off = () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('blur', onAway); window.removeEventListener('resize', onAway); };
 }
 
 export function iconButton(name, title, onclick, cls = '') {

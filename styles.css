@@ -1182,7 +1182,7 @@ img.empty-mark { display: block; width: 64px; height: 64px; margin: 0 auto 22px;
 .ask-btn .i { width: 14px; height: 14px; color: var(--accent); }
 .ask-btn kbd, .cmd-field kbd { font: 500 9.5px var(--mono); color: var(--dim); background: var(--raised); border-radius: 8px; padding: 3px 6px; }
 body[data-mode="library"] .ask-btn, body[data-mode="account"] .ask-btn { display: none; }
-@media (max-width: 760px) { .ask-btn span, .ask-btn kbd { display: none; } .ask-btn { padding: 0 8px; } }
+@media (max-width: 760px) { .ask-btn > span:not(.i), .ask-btn kbd { display: none; } .ask-btn { padding: 0 8px; } }
 
 .cmd { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; align-items: flex-start; padding-top: 14vh;
   animation: cmd-in 0.16s ease-out; }
@@ -1365,7 +1365,7 @@ body[data-mode="library"] .ask-btn, body[data-mode="account"] .ask-btn { display
 .profile-row .profile-label { flex: none; width: 64px; color: var(--muted); font-size: 12px; }
 .profile-row .profile-pick { flex: 1; min-width: 0; justify-content: space-between; height: 30px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: 2px; background: transparent; font-size: 12px; text-transform: none; letter-spacing: 0; }
 .profile-row .profile-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-row .profile-pick .chev { width: 12px; height: 12px; transform: rotate(90deg); color: var(--muted); }
+.profile-row .profile-pick .chev { width: 12px; height: 12px; color: var(--muted); }
 body.ws-no-studio .nav-ask { display: none; }
 
 /* Settings → Workspace: tiles that show or hide a tool or a panel section. */

@@ -34,13 +34,17 @@ export function preUniforms(p, stats) {
 export const toneActive = (p) => !!(p.blacks || p.shadows || p.highlights || p.whites || p.clarity);
 
 // Tone zone shapes over displayed lightness (see ZONES in shaders.js): [centre, width below, width
-// above (−1 = flat to that end)], [EV at +100, EV at −100]. Fitted to Camera Raw's renders of the
-// test charts (how far each slider moves each tone), then checked for smooth, never-reversing ramps.
+// above (−1 = flat to that end)] for raising, [EV at +100, EV at −100], and the window for lowering
+// (Camera Raw moves different tones up than down: Shadows +100 opens the deepest shadows, −100 sinks
+// the lower mid-tones). Fitted to Camera Raw's renders of the test charts (how far each slider moves
+// each tone), then checked for smooth, never-reversing ramps.
 export const ZONE_SHAPES = {
-  blacks: [[0.185, -1, 0.376], [0.775, 1.6]],
-  shadows: [[0.255, -1, 0.771], [1.325, 1.15]],
-  highlights: [[0.715, 0.72, -1], [1.375, 1.625]],
-  whites: [[0.645, 0.398, -1], [0.85, 0.562]],
+  blacks: [[0.125, -1, 0.56], [0.75, 2.075], [0.142, -1, 0.376]],
+  // Shadows and Highlights stop short of the closest fit (centre 0.02, 1.9 EV; lowering centre 0.97),
+  // which made steps in smooth gradients and hue drift at ±100.
+  shadows: [[0.18, -1, 0.8], [1.45, 1.15], [0.215, -1, 0.891]],
+  highlights: [[0.73, 0.855, -1], [1.275, 1.625], [0.715, 0.72, -1]],
+  whites: [[0.723, 0.503, -1], [0.875, 0.562], [0.65, 0.406, -1]],
 };
 const ZONE_ORDER = ['blacks', 'shadows', 'highlights', 'whites'];
 
@@ -58,6 +62,7 @@ export function mainUniforms(p) {
     uGuideOn: toneActive(p) ? 1 : 0,
     uTone: [p.blacks / 100, p.shadows / 100, p.highlights / 100, p.whites / 100],
     uZoneW: new Float32Array(ZONE_ORDER.flatMap((k) => [...ZONE_SHAPES[k][0], 0])),
+    uZoneWn: new Float32Array(ZONE_ORDER.flatMap((k) => [...(ZONE_SHAPES[k][2] || ZONE_SHAPES[k][0]), 0])),
     uZoneA: new Float32Array(ZONE_ORDER.flatMap((k) => ZONE_SHAPES[k][1])),
     uClarity: p.clarity / 100,
     uTexture: p.texture / 100,

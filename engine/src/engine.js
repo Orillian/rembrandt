@@ -212,7 +212,7 @@ export class Engine {
     const u = {
       uPre: this.dummy, uGuideAB: this.dummy, uTexel: [1 / w, 1 / h], uGuideOn: 1, uTone: [0.2, 0.3, -0.3, 0.1], uClarity: 0.2,
       uWBOn: 1, uWB: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), uVib: 0.2, uSat: 0.1, uMixOn: 1, uMixHue: z, uMixSat: z, uMixLum: z, uGradeOn: 1,
-      uZoneW: new Float32Array(16).fill(0.5), uZoneA: new Float32Array(8).fill(1),
+      uZoneW: new Float32Array(16).fill(0.5), uZoneWn: new Float32Array(16).fill(0.5), uZoneA: new Float32Array(8).fill(1),
     };
     // A float target is read back as floats (an 8-bit read is an error and wouldn't wait for the GPU).
     const sync = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px); };

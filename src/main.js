@@ -952,6 +952,10 @@ async function importItems(items, opts = {}) {
   const failed = [];
   const copyJobs = [];   // Lightroom virtual copies, made once their photo is in
   const many = items.length > 1;
+  // Going to the editor: the first photo opens as soon as its preview is decoded, while it is still
+  // being stored and the rest come in (storing a 25 MB RAW alone takes a second or two).
+  const toEditor = opts.open && !(app.view.mode === 'library' || opts.label || items.length > 20);
+  let openedEarly = null;
   const job = many && opts.progress !== false ? beginProgress((opts.label || 'Importing').replace(/:$/, '')) : null;
   for (let n = 0; n < items.length; n++) {
     const it = items[n];
@@ -1004,6 +1008,7 @@ async function importItems(items, opts = {}) {
       e.h = d.linear ? d.linear.h : d.bitmap.height;
       e.loading = false;
       const edited = applyImported(e, await importedSettings(it, file, e.w / e.h).catch(() => null));
+      if (toEditor && !first && !openedEarly) { openedEarly = e; openInEditor(e.id).catch((err) => console.warn(err)); }
       // Linked photos live in their service; a copy stays on this device only if the user wants that.
       const stored = it.src || (it.linked && !prefs.keepLinked) ? (catalog.rememberFile(e.id, file), false) : await catalog.storeFile(e.id, file);
       e.offline = false;
@@ -1062,7 +1067,7 @@ async function importItems(items, opts = {}) {
       const msg = `Imported ${fresh} photo${fresh === 1 ? '' : 's'}${collections.size ? ` and ${collections.size} album${collections.size === 1 ? '' : 's'}` : ''}`;
       if (bad) app.toast(`${msg} · ${bad}`, { ms: 8000 }); else progress(msg, true);
     } else {
-      await openInEditor(first.id);
+      if (openedEarly !== first) await openInEditor(first.id);
       if (bad) app.toast(bad, { ms: 6000 });
     }
   } else if (bad) app.toast(bad, { ms: 6000 });
@@ -2036,6 +2041,7 @@ function photoMenu(ids, anchor, extra = []) {
     aiOn() ? { label: n > 1 ? `Edit ${n} like me` : 'Edit like me', icon: 'sparkle', onClick: () => editLikeMe(ids) } : null,
     n > 1 && aiOn() ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => queueCull(ids) } : null,
     n > 1 ? (() => { const hero = heroOf(ids); return { label: `Make consistent with “${hero.name}”`, icon: 'sliders', onClick: () => queueConsistent(ids, hero.id) }; })() : null,
+    n === 1 ? { label: 'HDR from this photo', icon: 'sun', onClick: () => app.hdrFromOne('natural', ids[0]) } : null,
     ...extra,
   ]);
 }
@@ -2528,6 +2534,7 @@ function updateEmpty() {
 
 let modeBeforeAccount = 'library';
 function setMode(mode, section) {
+  closeMenu();   // a menu belongs to the view it was opened in
   if (mode === 'plan') { mode = 'account'; section = 'plan'; }
   if (mode === 'account') {
     if (app.view.mode !== 'account') modeBeforeAccount = app.view.mode || 'library';

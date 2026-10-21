@@ -4,7 +4,7 @@
 // live preview use the rules below; when AI is on, what you send is also read by Needle 3, a small
 // on-device language model (ai/needle.js), which understands looser phrasing.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
-import { el, clamp, clone, deepMerge, getPath, setPath } from './util.js';
+import { el, clamp, clone, deepMerge, getPath, setPath, revealIn } from './util.js';
 import { HSL_NAMES } from './params.js';
 import * as batch from './batch.js';
 import { icon } from './icons.js';
@@ -424,7 +424,7 @@ export function createCommandBar(app, mount = null) {
     if (!sec.classList.contains('open')) sec.querySelector('.sec-head').click();
     const ctl = c.control && [...sec.querySelectorAll('.ctl')].find((x) => x.querySelector('label')?.textContent === c.control);
     const target = ctl || sec;
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    revealIn(target, { center: true, behavior: 'smooth' });
     target.classList.remove('flash'); void target.offsetWidth; target.classList.add('flash');
     ctl?.querySelector('.val')?.focus();
   }
