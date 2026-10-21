@@ -71,6 +71,7 @@ import { sliderHooks, closeMenu, popMenu, button } from './ui.js';
 import { displayToScene, solveWhiteBalance, RAW_EV } from '../engine/src/color.js';
 import { toneBase, adapt } from './adapt.js';
 import { writeDNG } from './merge.js';
+import { expandFrame, EXPANDS } from './expand.js';
 import { readExif } from './exif.js';
 import { addJob, breathe, whenQuiet, registerKind, restoreJobs, trackActivity } from './jobs.js';
 import { mountJobs } from './jobs-ui.js';
@@ -303,6 +304,13 @@ const app = {
     if (job && made) job.open = () => openInEditor(made.id);
     app.toast(`${scale === 1 ? 'Restored' : 'Enlarged'} copy of “${cur.name}” is ready`, made ? { action: { label: 'Open', onClick: () => openInEditor(made.id) } } : {});
     return { w: out.width, h: out.height };
+  },
+  // Generative Expand (expand.js): queued; a wider or taller DNG appears beside the original.
+  expand(kind, id = this.images[this.cur]?.id) {
+    if (!id) throw new Error('Open a photo first');
+    const e = this.images.find((x) => x.id === id);
+    this.toast(`Generative Expand (${EXPANDS[kind].label}): added to background work`);
+    return addJob({ kind: 'expand', title: `Generative Expand · ${e?.name || ''}`, desc: { id, kind }, run: (job) => expandPhoto(id, kind, job) });
   },
   // AI Denoise (ai/denoise.js): queued; a denoised linear DNG appears beside each original.
   denoise({ strength = 0.5, ids, when } = {}) {
@@ -2242,6 +2250,45 @@ async function denoisePhoto(id, strength, job) {
   return { w: frame.w, h: frame.h };
 }
 
+// Generative Expand as a background job: the original at full size, the border filled, written as a
+// DNG and imported with the original's edits, minus those tied to places in the old frame (crop,
+// masks, spots, Liquify, the lens profile's distortion, which no longer fits the new frame).
+async function expandPhoto(id, kind, job) {
+  const e = app.images.find((x) => x.id === id);
+  if (!e) throw new Error('That photo is no longer in the library');
+  job.setProgress(0, 'Reading the original…');
+  const file = await originalFile(e);
+  if (!file) throw new Error(`The original of “${e.name}” isn’t available`);
+  let frame, gain = 1;
+  if (e.raw) {
+    const lin = e.linear && !e.linear.half ? e.linear : await decodeRawLinear(file, { quality: prefs.rawQuality, background: true });
+    frame = { w: lin.w, h: lin.h, data: lin.data };
+    gain = lin.gain;
+  } else {
+    const d = await decodeFile(file);
+    frame = frameFromBitmap(d.bitmap, 0);
+    d.bitmap.close?.();
+  }
+  await breathe(job);
+  job.setProgress(0.05, 'Filling the new edges…');
+  const r = await expandFrame(frame, gain, kind, { onProgress: (f) => job.setProgress(0.05 + f * 0.9), breathe: () => breathe(job) });
+  job.setProgress(0.97, 'Saving…');
+  const dng = writeDNG({ w: r.w, h: r.h, data: r.data, baseline: Math.log2(r.scale) - RAW_EV, model: 'Expand' });
+  const base = e.name.replace(/\.[^.]+$/, '');
+  const out = new File([dng], `${base}-Expand.dng`, { type: 'image/x-adobe-dng', lastModified: e.lastModified || Date.now() });
+  const [made] = (await importItems([{ file: out }], { open: false })) || [];
+  if (made && e.edited) {
+    const p = withSettings(defaultParams(r.w / r.h), developSettings(editOf(e)), r.w / r.h);
+    p.retouch = [];
+    p.warp = { ...p.warp, strokes: [], faces: null };
+    p.optics = { ...p.optics, profile: false, manualDistortion: 0, vertical: 0, horizontal: 0 };
+    touch(made, { params: p, edited: true, rating: e.rating, flag: e.flag });
+  }
+  if (made) { job.open = () => openInEditor(made.id); refreshThumbs([made]); }
+  app.toast(`Expanded copy of “${e.name}” is ready`, made ? { action: { label: 'Open', onClick: () => openInEditor(made.id) } } : {});
+  return { w: r.w, h: r.h };
+}
+
 // Merge (merge.js): HDR from brackets, focus stacks, panoramas. Frames are decoded here one at a
 // time and handed to a worker, which returns a linear DNG that is then imported like any RAW.
 const MERGES = {
@@ -3114,6 +3161,7 @@ function boot() {
     refreshLibrary();
     // Background work: kinds that can come back after a restart, then last session's queue.
     registerKind('denoise', (d, job) => denoisePhoto(d.id, d.strength, job));
+    registerKind('expand', (d, job) => expandPhoto(d.id, d.kind, job));
     registerKind('merge', (d, job) => runMerge(d.ids, d.kind, job));
     registerKind('cull', (d, job) => runCull(d.ids, job));
     registerKind('smart-index', (d, job) => { smartQueued = true; return runSmartIndex(job); });

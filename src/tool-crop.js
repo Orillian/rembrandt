@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { A, maxCrop, fitCrop, constrainCrop, cropValid } from './geometry.js';
 import { aspectRatioOf } from './params.js';
 import { detectTilt } from './straighten.js';
+import { EXPANDS } from './expand.js';
 import { PERSP } from '../engine/src/pipeline.js';
 
 // The tilt of the photo as framed now, measured with no straightening applied. null: no clear lines.
@@ -168,13 +169,20 @@ export function buildCropPanel(app) {
     ),
   );
 
+  // Generative Expand (expand.js): a new photo, wider or taller, its new edges filled in.
+  const expand = section('Generative Expand', { id: 'expand', open: false, badge: { icon: 'enlarge', color: 'linear-gradient(135deg,#a78bfa,#7c3aed)' } });
+  expand.body.append(
+    el('div', { class: 'hint' }, 'Makes a new photo with more around the edges, filled with what plausibly continues the scene. The original stays as it is.'),
+    el('div', { class: 'chips' }, ...Object.entries(EXPANDS).map(([k, x]) => el('button', { class: 'chip', onclick: () => app.expand(k) }, x.label))),
+  );
+
   function refresh() {
     const G = g();
     chipEls.forEach(([v, b]) => b.classList.toggle('on', v === G.aspect || (v === 'original' && !ASPECTS.some(([x]) => x === G.aspect) && G.aspect.startsWith('1:'))));
     reg.forEach((c) => c.refresh());
   }
   refresh();
-  return { el: el('div', { class: 'panel-view' }, sec.el), refresh, swap, rot };
+  return { el: el('div', { class: 'panel-view' }, sec.el, expand.el), refresh, swap, rot };
 }
 
 // ------------------------------------------------------------------ overlay
