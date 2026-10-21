@@ -47,6 +47,7 @@ export function describe(s) {
     if (Math.abs(v - d[k]) > 1e-6) out.push(`${name} ${sign(v, k === 'exposure' ? 2 : 0)}${k === 'exposure' ? ' EV' : ''}`);
   }
   if (s.bw) out.push('Black & white');
+  if (s.profile === 'standard') out.push('Profile: Rembrandt Standard');
   if (s.curve && !['master', 'r', 'g', 'b'].every((c) => isIdent(s.curve[c] || [[0, 0], [1, 1]]))) out.push('Tone curve');
   if (s.hsl) {
     const parts = [];

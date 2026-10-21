@@ -4,6 +4,7 @@
 
 import { estimateBlur } from './refocus.js';
 import { landmarkParts, unionOf, SEG_PARTS } from '../people.js';
+import { aiOn, assertAi } from '../workspace.js';
 
 const ANALYSIS_LONG = 1024;
 
@@ -102,6 +103,7 @@ export const objectComps = (m) => m.comps.filter((c) => (c.type === 'object' && 
 // Faces in a photo: [[ [x, y] × 478 ] per face], x and y 0–1 of the photo. Uses a larger input than
 // the other analyses so faces in wider shots are still found.
 export async function detectFaces(e) {
+  assertAi();
   if (e.ai?.faces) return e.ai.faces;
   let bm;
   if (e.bitmap) {
@@ -140,6 +142,7 @@ export class AI {
   get status() { return this.busy ? 'working' : 'idle'; }
 
   async analyze(e, op, point) {
+    assertAi();
     e.ai ||= { objects: new Map() };
     const key = op === 'object' ? `${point[0].toFixed(4)},${point[1].toFixed(4)}` : op;
     if (op === 'object' ? e.ai.objects.has(key) : e.ai[op]) return op === 'object' ? e.ai.objects.get(key) : e.ai[op];
@@ -182,6 +185,7 @@ export class AI {
 
   // Run everything the settings need that is not there yet.
   async ensure(e, p) {
+    if (!aiOn()) return;
     const ops = [...aiNeeds(p)].filter((op) => !this.has(e, op));
     const objs = [];
     for (const m of p.masks || []) for (const c of objectComps(m)) if (c.type === 'object') objs.push(c.point);

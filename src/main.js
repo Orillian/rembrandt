@@ -78,6 +78,8 @@ import { mountJobs } from './jobs-ui.js';
 import { denoiseStrength } from './ai/panel-sr.js';
 import { signature, similarity, THRESHOLD as SIMILAR_THRESHOLD, MAX_RESULTS as SIMILAR_MAX } from './similar.js';
 import { estimateAirlight } from '../engine/src/pipeline.js';
+import { shown, aiOn, onWorkspaceChange } from './workspace.js';
+import { hdrFromOne, HDR_ONE } from './hdr-one.js';
 
 const $ = (id) => document.getElementById(id);
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
@@ -224,6 +226,7 @@ const app = {
   // ------------------------------------------------------------ panels & tools
   setTool(t) {
     if (!this.img && t !== 'edit') return;
+    if (t !== 'edit' && !shown(t)) return;   // hidden in Settings → Workspace
     if (this.state.tool === t && this.panel) return;
     this.state.tool = t;
     this.state.pick = null;
@@ -261,6 +264,7 @@ const app = {
   ai,
   aiError: null,
   aiEnsure() {
+    if (!aiOn()) return;
     const e = this.images[this.cur];
     if (!e || !this.params) return;
     ai.ensure(e, this.params).then(() => { this.aiError = null; this.requestRender(); this.refreshPanel(); }, (err) => this.aiFailed(err));
@@ -311,6 +315,13 @@ const app = {
     const e = this.images.find((x) => x.id === id);
     this.toast(`Generative Expand (${EXPANDS[kind].label}): added to background work`);
     return addJob({ kind: 'expand', title: `Generative Expand · ${e?.name || ''}`, desc: { id, kind }, run: (job) => expandPhoto(id, kind, job) });
+  },
+  // HDR from one photo (hdr-one.js): queued; the fused linear DNG appears beside the original.
+  hdrFromOne(strength = 'natural', id = this.images[this.cur]?.id) {
+    if (!id) throw new Error('Open a photo first');
+    const e = this.images.find((x) => x.id === id);
+    this.toast(`HDR from one photo (${HDR_ONE[strength].label}): added to background work`);
+    return addJob({ kind: 'hdr-one', title: `HDR from one photo · ${e?.name || ''}`, desc: { id, strength }, run: (job) => hdrOnePhoto(id, strength, job) });
   },
   // AI Denoise (ai/denoise.js): queued; a denoised linear DNG appears beside each original.
   denoise({ strength = 0.5, ids, when } = {}) {
@@ -720,6 +731,8 @@ function newEntry(rec) {
 
 async function loadCatalog() {
   const recs = await catalog.listPhotos();
+  // Edits made before profiles existed keep the look they were made with (Rembrandt Standard).
+  for (const r of recs) if (r.edited && r.params?.v === 1 && !('profile' in r.params)) r.params.profile = 'standard';
   // A linked photo without a copy here is back in its service after a restart.
   app.images = recs.map((r) => newEntry(r.linked && !r.stored && !r.src ? { ...r, offline: true } : r));
   await finishPendingDeletes();
@@ -923,7 +936,8 @@ async function editedThumb(bitmap, params, aspect) {
 
 async function restoreEngine() {
   const cur = app.images[app.cur];
-  if (engineDirty && cur && app.img) { await applySource(cur); app.requestRender(); }
+  // A photo still opening has no pixels yet; opening it points the engine at it anyway.
+  if (engineDirty && cur && app.img && (cur.linear || cur.bitmap)) { await applySource(cur); app.requestRender(); }
   engineDirty = false;
 }
 
@@ -2019,8 +2033,8 @@ function photoMenu(ids, anchor, extra = []) {
     { label: 'Apply preset…', icon: 'presets', onClick: () => presetMenu(ids, anchor) },
     { label: n > 1 ? `Reset edits on ${n} photos` : 'Reset edits', icon: 'reset', onClick: () => resetEdits(ids) },
     n === 1 ? { label: 'Find similar', icon: 'search', onClick: () => findSimilar(ids[0]) } : null,
-    { label: n > 1 ? `Edit ${n} like me` : 'Edit like me', icon: 'sparkle', onClick: () => editLikeMe(ids) },
-    n > 1 ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => queueCull(ids) } : null,
+    aiOn() ? { label: n > 1 ? `Edit ${n} like me` : 'Edit like me', icon: 'sparkle', onClick: () => editLikeMe(ids) } : null,
+    n > 1 && aiOn() ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => queueCull(ids) } : null,
     n > 1 ? (() => { const hero = heroOf(ids); return { label: `Make consistent with “${hero.name}”`, icon: 'sliders', onClick: () => queueConsistent(ids, hero.id) }; })() : null,
     ...extra,
   ]);
@@ -2079,7 +2093,7 @@ let smartQueued = false;
 export const smartState = { progress: '', listeners: new Set() };
 const smartSay = (t) => { smartState.progress = t; smartState.listeners.forEach((f) => f(t)); };
 function queueSmartIndex() {
-  if (!prefs.smartSearch || smartQueued) return;
+  if (!prefs.smartSearch || !aiOn() || smartQueued) return;
   smartQueued = true;
   addJob({ kind: 'smart-index', title: 'Smart search', when: 'now', desc: {}, run: runSmartIndex });
 }
@@ -2105,7 +2119,7 @@ async function runSmartIndex(job) {
 }
 // Photo id → score for a search, best first, or null when Smart search is off or not set up yet.
 async function smartScores(q) {
-  if (!prefs.smartSearch || q.length < 2 || !(await clip.downloaded())) return null;
+  if (!prefs.smartSearch || !aiOn() || q.length < 2 || !(await clip.downloaded())) return null;
   const tv = await clip.textEmbedding(q);
   const scored = app.images.filter((e) => e.clip?.v === 1).map((e) => [e.id, clip.similarity(tv, e.clip)]).sort((a, b) => b[1] - a[1]);
   const best = scored[0]?.[1] ?? 0;
@@ -2263,40 +2277,85 @@ async function denoisePhoto(id, strength, job) {
 // Generative Expand as a background job: the original at full size, the border filled, written as a
 // DNG and imported with the original's edits, minus those tied to places in the old frame (crop,
 // masks, spots, Liquify, the lens profile's distortion, which no longer fits the new frame).
-async function expandPhoto(id, kind, job) {
-  const e = app.images.find((x) => x.id === id);
-  if (!e) throw new Error('That photo is no longer in the library');
+// Linear sRGB (Uint16 RGB times `k`) as 8-bit sRGB RGBA.
+function linearToRGBA(data, k) {
+  const N = 16384, enc = new Uint8Array(N + 1).map((_, i) => Math.round(255 * (i / N <= 0.0031308 ? (i / N) * 12.92 : 1.055 * (i / N) ** (1 / 2.4) - 0.055)));
+  const n = data.length / 3, out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < 3; c++) out[i * 4 + c] = enc[Math.min(N, Math.round(data[i * 3 + c] * k * N))];
+    out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+// The original's linear pixels, for jobs that make a new photo from it (Expand, HDR from one photo).
+async function linearOriginal(e, job) {
   job.setProgress(0, 'Reading the original…');
   const file = await originalFile(e);
   if (!file) throw new Error(`The original of “${e.name}” isn’t available`);
-  let frame, gain = 1;
   if (e.raw) {
     const lin = e.linear && !e.linear.half ? e.linear : await decodeRawLinear(file, { quality: prefs.rawQuality, background: true });
-    frame = { w: lin.w, h: lin.h, data: lin.data };
-    gain = lin.gain;
-  } else {
-    const d = await decodeFile(file);
-    frame = frameFromBitmap(d.bitmap, 0);
-    d.bitmap.close?.();
+    return { frame: { w: lin.w, h: lin.h, data: lin.data }, gain: lin.gain };
   }
-  await breathe(job);
-  job.setProgress(0.05, 'Filling the new edges…');
-  const r = await expandFrame(frame, gain, kind, { onProgress: (f) => job.setProgress(0.05 + f * 0.9), breathe: () => breathe(job) });
-  job.setProgress(0.97, 'Saving…');
-  const dng = writeDNG({ w: r.w, h: r.h, data: r.data, baseline: Math.log2(r.scale) - RAW_EV, model: 'Expand' });
+  const d = await decodeFile(file);
+  const frame = frameFromBitmap(d.bitmap, 0);
+  d.bitmap.close?.();
+  return { frame, gain: 1 };
+}
+// A new linear DNG beside `e`, carrying its edit (the open photo's edit may not be saved yet: it
+// counts too). `adjust(p)` changes the carried edit for the new photo.
+// `r.rgba` (8-bit, display-referred) is saved as a PNG instead.
+async function importBeside(e, r, { model, suffix, adjust = () => {} }) {
   const base = e.name.replace(/\.[^.]+$/, '');
-  const out = new File([dng], `${base}-Expand.dng`, { type: 'image/x-adobe-dng', lastModified: e.lastModified || Date.now() });
+  let out;
+  if (r.rgba) {
+    const c = new OffscreenCanvas(r.w, r.h);
+    c.getContext('2d').putImageData(new ImageData(r.rgba, r.w, r.h), 0, 0);
+    out = new File([await c.convertToBlob({ type: 'image/png' })], `${base}-${suffix}.png`, { type: 'image/png', lastModified: e.lastModified || Date.now() });
+  } else {
+    const dng = writeDNG({ w: r.w, h: r.h, data: r.data, baseline: Math.log2(r.scale) - RAW_EV, model });
+    out = new File([dng], `${base}-${suffix}.dng`, { type: 'image/x-adobe-dng', lastModified: e.lastModified || Date.now() });
+  }
   const [made] = (await importItems([{ file: out }], { open: false })) || [];
-  // The open photo's edit may not be saved yet: it counts too.
   if (made && (e.edited || app.images[app.cur] === e)) {
     const p = withSettings(defaultParams(r.w / r.h), developSettings(editOf(e)), r.w / r.h);
+    adjust(p);
+    touch(made, { params: p, edited: true, rating: e.rating, flag: e.flag });
+  }
+  if (made) refreshThumbs([made]);
+  return made;
+}
+async function expandPhoto(id, kind, job) {
+  const e = app.images.find((x) => x.id === id);
+  if (!e) throw new Error('That photo is no longer in the library');
+  const { frame, gain } = await linearOriginal(e, job);
+  await breathe(job);
+  job.setProgress(0.05, 'Filling the new edges…');
+  let r = await expandFrame(frame, gain, kind, { onProgress: (f) => job.setProgress(0.05 + f * 0.9), breathe: () => breathe(job) });
+  job.setProgress(0.97, 'Saving…');
+  // A JPEG stays display-referred (a PNG), so the copy looks and edits as the original does.
+  if (!e.raw) r = { w: r.w, h: r.h, rgba: linearToRGBA(r.data, r.scale / 65535) };
+  const made = await importBeside(e, r, { model: 'Expand', suffix: 'Expand', adjust: (p) => {
     p.retouch = [];
     p.warp = { ...p.warp, strokes: [], faces: null };
     p.optics = { ...p.optics, profile: false, manualDistortion: 0, vertical: 0, horizontal: 0 };
-    touch(made, { params: p, edited: true, rating: e.rating, flag: e.flag });
-  }
-  if (made) { job.open = () => openInEditor(made.id); refreshThumbs([made]); }
+  } });
+  if (made) job.open = () => openInEditor(made.id);
   app.toast(`Expanded copy of “${e.name}” is ready`, made ? { action: { label: 'Open', onClick: () => openInEditor(made.id) } } : {});
+  return { w: r.w, h: r.h };
+}
+async function hdrOnePhoto(id, strength, job) {
+  const e = app.images.find((x) => x.id === id);
+  if (!e) throw new Error('That photo is no longer in the library');
+  const { frame, gain } = await linearOriginal(e, job);
+  await breathe(job);
+  job.setProgress(0.05, 'Making the exposures…');
+  const r = await hdrFromOne(frame, gain, strength, { display: !e.raw, onProgress: (f) => job.setProgress(0.05 + f * 0.92), breathe: () => breathe(job) });
+  job.setProgress(0.97, 'Saving…');
+  // Same pixels and geometry as the original: the whole edit carries over. Opened shadows show their
+  // noise, so colour noise reduction starts a little higher.
+  const made = await importBeside(e, r, { model: 'HDR', suffix: 'HDR', adjust: (p) => { p.nr = { ...p.nr, chroma: Math.max(p.nr.chroma || 0, 25) }; } });
+  if (made) job.open = () => openInEditor(made.id);
+  app.toast(`HDR of “${e.name}” is ready`, made ? { action: { label: 'Open', onClick: () => openInEditor(made.id) } } : {});
   return { w: r.w, h: r.h };
 }
 
@@ -2836,6 +2895,20 @@ const commandBar = createCommandBar(app);
 const sideChat = createCommandBar(app, navSide.ask);
 const askWithWords = () => (getComputedStyle($('navside')).display !== 'none' ? sideChat : commandBar).open();
 $('navside').append(navSide.el);
+
+// Settings → Workspace: hidden tools and sections, and AI on or off.
+function applyWorkspace(first) {
+  document.querySelectorAll('.rail [data-tool]').forEach((b) => { b.hidden = b.dataset.tool !== 'edit' && !shown(b.dataset.tool); });
+  document.body.classList.toggle('ws-no-studio', !shown('studio'));
+  document.body.classList.toggle('ai-off', !aiOn());
+  if (first) return;
+  if (app.state.tool !== 'edit' && !shown(app.state.tool)) app.setTool('edit');
+  else if (app.params) app.buildPanel();
+  if (aiOn()) { app.aiEnsure(); queueSmartIndex(); }
+  app.requestRender();
+}
+onWorkspaceChange(() => applyWorkspace(false));
+applyWorkspace(true);
 const setNavSide = (on) => {
   document.body.classList.toggle('nav-off', !on);
   try { localStorage.setItem('rembrandt:navside', on ? '1' : '0'); } catch { /* ignore */ }
@@ -3173,6 +3246,7 @@ function boot() {
     // Background work: kinds that can come back after a restart, then last session's queue.
     registerKind('denoise', (d, job) => denoisePhoto(d.id, d.strength, job));
     registerKind('expand', (d, job) => expandPhoto(d.id, d.kind, job));
+    registerKind('hdr-one', (d, job) => hdrOnePhoto(d.id, d.strength, job));
     registerKind('merge', (d, job) => runMerge(d.ids, d.kind, job));
     registerKind('cull', (d, job) => runCull(d.ids, job));
     registerKind('smart-index', (d, job) => { smartQueued = true; return runSmartIndex(job); });

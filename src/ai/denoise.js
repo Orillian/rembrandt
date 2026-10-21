@@ -15,6 +15,7 @@
 import { webgpu, packMats, convWGSL, convGLSL, VS, TX, TH } from './upscale.js';
 import { H2F } from '../merge.js';
 import { breathe, chunker, pacer, glFinished } from '../jobs.js';
+import { assertAi } from '../workspace.js';
 
 const SIZES = [[13, 96], ...Array(10).fill([96, 96]), [96, 12]];
 const T = 192, PAD = 14;   // tile and overlap, in half-size pixels
@@ -239,6 +240,7 @@ function noiseLevel(Y, w, h) {
 // (2^(RAW_EV + baseline) for RAW). Resolves { data: Uint16Array RGB, scale } where the DNG's display
 // brightness is data / 65535 · scale.
 export async function denoiseFrame(frame, { gain = 1, strength = 0.5, onProgress, force, job } = {}) {
+  assertAi();
   const { w: W0, h: H0, data } = frame;
   // Even size for the 2× unshuffle (the last row / column repeats).
   const W = W0 + (W0 & 1), H = H0 + (H0 & 1);

@@ -1,11 +1,14 @@
 // The main "Edit" panel: light, color, effects, curve, mixer, grading, detail.
 import { el, getPath, setPath } from './util.js';
 import { slider, section, segmented, iconButton, button, popMenu, toggle } from './ui.js';
+import { icon } from './icons.js';
 import { autoVertical } from './tool-crop.js';
 import { detectDistortion } from './lens-auto.js';
 import { curveEditor, hslMixer, gradingControl } from './widgets.js';
 import { defaultParams } from './params.js';
 import { LOOKS } from './looks.js';
+import { PROFILES } from '../engine/src/color.js';
+import { shown, aiOn } from './workspace.js';
 
 const TEMP_TRACK = 'linear-gradient(90deg,#4f7dff,#9fb4d9 45%,#d9c49f 55%,#ffb53d)';
 const TINT_TRACK = 'linear-gradient(90deg,#3fcf5f,#9fcfa9 45%,#d3a5cf 55%,#e04fd8)';
@@ -39,6 +42,7 @@ export function buildEditPanel(app) {
   const on = (g) => ({ get: () => !app.params.off?.[g], set: (v) => app.setGroupOn(g, v) });
   const sec = (title, g, opts) => {
     const x = section(title, { ...opts, badge: B[g], enabled: on(g) });
+    x.el.hidden = !shown('edit:' + opts.id);   // Settings → Workspace
     reg.push(x);
     return x;
   };
@@ -55,9 +59,9 @@ export function buildEditPanel(app) {
   }, 'seg-sm treatment');
   reg.push({ refresh: () => treatment.set(app.params.bw) });
 
-  const tools = el('div', { class: 'edit-tools' },
+  const tools = el('div', { class: 'edit-tools' + (aiOn() ? '' : ' no-ai') },
     button('Auto', () => app.autoTone(), 'sm', 'wand'),
-    Object.assign(button('Like me', () => app.editLikeMe(), 'sm', 'sparkle'), { title: 'Edit like me: settings learned from the photos you’ve edited' }),
+    aiOn() ? Object.assign(button('Like me', () => app.editLikeMe(), 'sm', 'sparkle'), { title: 'Edit like me: settings learned from the photos you’ve edited' }) : null,
     treatment.el,
     el('span', { class: 'grow' }),
     iconButton('more', 'More', (e) => popMenu(e.currentTarget, [
@@ -65,9 +69,32 @@ export function buildEditPanel(app) {
       { label: 'Choose what to copy…', icon: 'copy', onClick: () => app.copySettings(true) },
       { label: 'Paste edits', icon: 'paste', onClick: () => app.pasteSettings() },
       { sep: true },
+      { label: 'HDR from this photo', icon: 'sun', onClick: () => app.hdrFromOne('natural') },
+      { label: 'HDR from this photo (strong)', icon: 'sun', onClick: () => app.hdrFromOne('strong') },
+      { sep: true },
       { label: 'Reset all edits', icon: 'reset', onClick: () => app.resetAll() },
     ]), 'sm'),
   );
+
+  // --- profile (RAWs): how the camera's data becomes colour, before any slider.
+  const profBtn = button('', (e) => {
+    const cm = app.cameraMatch, key = cm?.key();
+    const pick = (v) => { app.params.profile = v; app.params.cameraLook = false; app.requestRender(); app.commit(); app.refreshPanel(); };
+    popMenu(e.currentTarget, [
+      { label: PROFILES.color, checked: app.params.profile !== 'standard' && !app.params.cameraLook, onClick: () => pick('color') },
+      { label: PROFILES.standard, checked: app.params.profile === 'standard' && !app.params.cameraLook, onClick: () => pick('standard') },
+      ...(key ? [{ sep: true }, { label: `Match my ${key}`, checked: !!app.params.cameraLook, onClick: () => {
+        if (!cm.info()) { cm.learn(); return; }
+        app.set('cameraLook', true); app.commit(); app.refreshPanel();
+      } }] : []),
+    ]);
+  }, 'sm profile-pick');
+  profBtn.append(icon('chevron', 'i chev'));
+  const profRow = el('div', { class: 'profile-row' }, el('span', { class: 'profile-label' }, 'Profile'), profBtn);
+  reg.push({ refresh: () => {
+    profRow.hidden = !app.images[app.cur]?.raw;
+    profBtn.firstChild.textContent = app.params.cameraLook && app.cameraMatch?.info() ? `Match my ${app.cameraMatch.key()}` : PROFILES[app.params.profile === 'standard' ? 'standard' : 'color'];
+  } });
 
   // --- light
   const light = sec('Light', 'light', { id: 'light', onReset: resetPaths(['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks']) });
@@ -216,6 +243,6 @@ export function buildEditPanel(app) {
     S('optics.horizontal', 'Horizontal', -100, 100),
   );
 
-  const root = el('div', { class: 'panel-view' }, tools, light.el, color.el, look.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);
+  const root = el('div', { class: 'panel-view' }, tools, profRow, light.el, color.el, look.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);
   return { el: root, refresh: () => reg.forEach((c) => c.refresh()) };
 }

@@ -5,6 +5,7 @@
 // checked against its SHA-256; photos and searches never leave the device.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 import { CONFIG } from '../config.js';
+import { assertAi } from '../workspace.js';
 
 const REV = 'd15189d7028b43f1d3e65039190477f6af591c2a';
 const FILES = {
@@ -54,6 +55,7 @@ export async function downloaded() {
 let loaded = null;
 // Loads (downloading if needed) both networks and the tokenizer. `onProgress(0–1)`.
 export function load(onProgress = () => {}) {
+  assertAi();
   if (loaded) return loaded;
   loaded = (async () => {
     const total = Object.values(FILES).reduce((s, f) => s + f.size, 0);

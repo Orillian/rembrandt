@@ -7,6 +7,7 @@ import { A } from './geometry.js';
 import { newMask, newComponent, maskAdjDefaults, COMP_LABELS } from './params.js';
 import { brushCanvas, brushAppend, brushForget } from './brush.js';
 import { PARTS } from './people.js';
+import { aiOn } from './workspace.js';
 
 const TYPES = ['brush', 'linear', 'radial', 'color', 'luminance', 'all'];
 const AI_TYPES = ['subject', 'background', 'person', 'object', 'depth'];
@@ -102,8 +103,8 @@ export function buildMaskPanel(app) {
 
     // ---- create
     const newMenu = (e) => popMenu(e.currentTarget, [
-      { head: 'Found by AI' }, ...AI_TYPES.map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addMask(app, t) })),
-      { sep: true }, { head: 'Draw or select' }, ...TYPES.map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addMask(app, t) })),
+      ...(aiOn() ? [{ head: 'Found by AI' }, ...AI_TYPES.map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addMask(app, t) })), { sep: true }] : []),
+      { head: 'Draw or select' }, ...TYPES.map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addMask(app, t) })),
     ]);
     const create = section('Masks', {
       id: 'masks', badge: { icon: 'mask' }, enabled: { get: () => !app.params.off?.masks, set: (v) => app.setGroupOn('masks', v) },
@@ -112,7 +113,7 @@ export function buildMaskPanel(app) {
     if (!masks.length) {
       // One grid: AI selections first (marked), then the manual shapes.
       const tile = (t, ai) => el('button', { class: 'tile' + (ai ? ' ai' : ''), title: ai ? `${COMP_LABELS[t]} — found by AI on this device` : COMP_LABELS[t], onclick: () => addMask(app, t) }, icon(t), el('span', {}, SHORT[t]));
-      create.body.append(el('div', { class: 'tile-grid' }, AI_TYPES.map((t) => tile(t, true)), TYPES.filter((t) => t !== 'all').map((t) => tile(t, false)), tile('all', false)));
+      create.body.append(el('div', { class: 'tile-grid' }, (aiOn() ? AI_TYPES : []).map((t) => tile(t, true)), TYPES.filter((t) => t !== 'all').map((t) => tile(t, false)), tile('all', false)));
     }
 
     if (masks.length) {
@@ -152,7 +153,7 @@ export function buildMaskPanel(app) {
       });
       create.body.append(list);
     } else {
-      create.body.append(el('div', { class: 'empty-note' }, 'Choose what to adjust. Tiles with a dot are found by AI.'));
+      create.body.append(el('div', { class: 'empty-note' }, aiOn() ? 'Choose what to adjust. Tiles with a dot are found by AI.' : 'Choose what to adjust.'));
     }
     root.append(create.el);
 
@@ -160,7 +161,7 @@ export function buildMaskPanel(app) {
     if (!m) return;
 
     // ---- components
-    const typeMenu = (mode) => (e) => { e.stopPropagation(); popMenu(e.currentTarget, [...AI_TYPES, ...TYPES].map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addComp(app, m, t, mode) }))); };
+    const typeMenu = (mode) => (e) => { e.stopPropagation(); popMenu(e.currentTarget, [...(aiOn() ? AI_TYPES : []), ...TYPES].map((t) => ({ label: COMP_LABELS[t], icon: t, onClick: () => addComp(app, m, t, mode) }))); };
     const comps = section('Selection', {
       id: 'mask-comps', badge: { icon: 'intersect' },
       right: el('span', { class: 'row tight' },

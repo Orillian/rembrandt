@@ -9,6 +9,7 @@ import { iconButton, button, popMenu } from './ui.js';
 import * as A from './albums.js';
 import * as F from './folders.js';
 import { localOnly } from './sync-check.js';
+import { aiOn } from './workspace.js';
 
 const PREF = 'lumen:library';
 const DEF = { view: 'all', sort: 'captured', size: 200, sidebar: true };
@@ -247,11 +248,13 @@ export function buildLibrary(app, api) {
           { label: 'Keywords…', icon: 'pencil', onClick: () => api.editKeywords(ids()) },
           n === 1 ? { label: 'Make a virtual copy (⌘ \')', icon: 'copy', onClick: () => api.makeVirtualCopy(ids()[0]) } : null,
           n === 1 ? { label: 'Find similar', icon: 'search', onClick: () => api.findSimilar(ids()[0]) } : null,
-          { label: n > 1 ? `AI Denoise ${n} photos` : 'AI Denoise', icon: 'sparkle', onClick: () => { api.denoisePhotos(ids()); app.toast(`AI Denoise: ${n === 1 ? 'added' : `${n} photos added`} to background work`); } },
+          aiOn() ? { label: n > 1 ? `AI Denoise ${n} photos` : 'AI Denoise', icon: 'sparkle', onClick: () => { api.denoisePhotos(ids()); app.toast(`AI Denoise: ${n === 1 ? 'added' : `${n} photos added`} to background work`); } } : null,
           n > 1 && n <= 4 ? { label: 'Compare side by side (C)', icon: 'compare', onClick: () => api.comparePhotos(ids()) } : null,
-          n > 1 ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => { api.cullPhotos(ids()); app.toast('Picking the best: added to background work'); } } : null,
-          n > 1 ? { sep: true } : null,
-          n > 1 ? { head: 'Merge' } : null,
+          n > 1 && aiOn() ? { label: `Pick the best of ${n}`, icon: 'star', onClick: () => { api.cullPhotos(ids()); app.toast('Picking the best: added to background work'); } } : null,
+          { sep: true },
+          { head: n > 1 ? 'Merge' : 'HDR' },
+          n === 1 ? { label: 'HDR from this photo', icon: 'sun', onClick: () => app.hdrFromOne('natural', ids()[0]) } : null,
+          n === 1 ? { label: 'HDR from this photo (strong)', icon: 'sun', onClick: () => app.hdrFromOne('strong', ids()[0]) } : null,
           n > 1 ? { label: 'HDR (bracketed exposures)', icon: 'sun', onClick: () => api.mergePhotos(ids(), 'hdr') } : null,
           n > 1 ? { label: 'Panorama', icon: 'photos', onClick: () => api.mergePhotos(ids(), 'pano') } : null,
           n > 1 ? { label: 'Focus stack', icon: 'focus', onClick: () => api.mergePhotos(ids(), 'focus') } : null,

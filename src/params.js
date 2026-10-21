@@ -1,5 +1,6 @@
 // Edit settings model, defaults and built-in presets.
 import { uid, clone, deepMerge, nextVersion } from './util.js';
+import { aiOn, AI_GROUPS } from './workspace.js';
 
 export const HSL_NAMES = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Lavender', 'Magenta'];
 export const HSL_HUES = [0, 30, 55, 120, 180, 225, 270, 315];
@@ -40,6 +41,8 @@ export function defaultParams(aspect = 1.5) {
     retouch: [],
     // Reshape: Liquify strokes and face sculpting (src/warp.js), before spot removal.
     warp: { strokes: [], eyes: 0, face: 0, nose: 0, smile: 0, faces: null },
+    // Profile (RAWs): 'color' (Rembrandt Color) or 'standard' (Rembrandt Standard); see PROFILES in color.js.
+    profile: 'color',
     // Match my camera: the camera's own colour, learned from its JPEGs (src/camera-match.js). RAWs only.
     cameraLook: false,
     // Look (looks.js): a built-in film look ('film:…') or an imported .cube ('cube:…'), on display colour.
@@ -85,20 +88,23 @@ export const GROUPS = {
 // The settings as rendered: groups that are switched off fall back to their defaults.
 const effCache = new WeakMap();
 export function effectiveParams(p) {
-  if (!p?.off || !Object.values(p.off).some(Boolean)) return p;
+  // While AI is off (Settings → Workspace), adjustments that need a model render as switched off.
+  const off = aiOn() ? p?.off : { ...p?.off, ...Object.fromEntries(AI_GROUPS.map((g) => [g, true])) };
+  if (!off || !Object.values(off).some(Boolean)) return p;
+  const key = JSON.stringify(p) + (aiOn() ? '' : '|ai-off');
   const hit = effCache.get(p);
-  if (hit && hit.key === JSON.stringify(p)) return hit.value;
+  if (hit && hit.key === key) return hit.value;
   const d = defaultParams();
   const out = { ...p, ai: p.ai ? { ...p.ai } : p.ai };
   for (const [g, paths] of Object.entries(GROUPS)) {
-    if (!p.off[g]) continue;
+    if (!off[g]) continue;
     for (const path of paths) {
       const [a, b] = path.split('.');
       if (b) out[a] = { ...out[a], [b]: clone(d[a][b]) };
       else out[a] = clone(d[a]);
     }
   }
-  effCache.set(p, { key: JSON.stringify(p), value: out });
+  effCache.set(p, { key, value: out });
   return out;
 }
 

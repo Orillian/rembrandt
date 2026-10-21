@@ -86,13 +86,19 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Background work that stays out of the way**: AI Denoise, Super Resolution and merges run in small
   GPU slices that pause while you edit, or when you're away, or overnight in a night window you set
   (Settings › Performance). The queue survives restarts.
-- **Merge**: HDR from brackets, panoramas and focus stacks, each to a RAW-like DNG.
+- **Merge**: HDR from brackets, panoramas and focus stacks, each to a RAW-like DNG. **HDR from one
+  photo** makes darker and brighter exposures of a single shot and blends each where it looks best,
+  so shadows open and highlights hold without a tripod or brackets.
 - **RAW** from 1,000+ cameras, developed on the GPU: tone, colour, curves, grading, dehaze, detail.
   Default colour measured against Camera Raw on test charts, and the tone sliders (Highlights,
   Shadows, Whites, Blacks) are broad, overlapping zones fitted to how Lightroom's move each tone, so
   adjustments blend into the light around them, without halos, banding or hue shifts. A 24 MP RAW is
   ready to edit in a second or two (half size first, full size in the background), and going back to
-  one you just had open is instant.
+  one you just had open is instant. Two profiles of our own: **Rembrandt Standard** (neutral, matched
+  to Camera Raw) and **Rembrandt Color** (the default: a little more contrast, richer reds and
+  yellows, calmer greens), or **Match my camera** for your camera's own look.
+- **Your workspace**: hide the tools and panel sections you don't use (Settings › Workspace), and
+  turn AI off altogether: its tools disappear and no model is downloaded or run.
 - **Made for old computers too**: Rembrandt times your graphics card once and picks a working size it
   can keep up with, works at half size while a slider moves, and needs only WebGL 2 (OpenGL 3.3-class
   graphics).

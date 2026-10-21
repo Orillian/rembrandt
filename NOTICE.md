@@ -55,7 +55,8 @@ data is used; `src/lensfun.js` is our own code.
 ## RAWmakase (MIT)
 Lens corrections (the built-in Fujifilm and Sony tables in `src/lens.js`, the radial model in
 `engine/src/pipeline.js`) and spot removal (the Heal membrane, Clone and automatic source search in
-`src/retouch.js`) are ported from RAWmakase, https://github.com/pch/rawmakase.
+`src/retouch.js`) are ported from RAWmakase, https://github.com/pch/rawmakase. The Rembrandt Color
+profile's look (`engine/src/color.js`, `profileColor` in `engine/src/shaders.js`) follows RAWmakase Color.
 
 > MIT License
 >

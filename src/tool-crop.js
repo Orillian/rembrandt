@@ -7,6 +7,7 @@ import { aspectRatioOf } from './params.js';
 import { detectTilt } from './straighten.js';
 import { EXPANDS } from './expand.js';
 import { PERSP } from '../engine/src/pipeline.js';
+import { aiOn } from './workspace.js';
 
 // The tilt of the photo as framed now, measured with no straightening applied. null: no clear lines.
 export function measureTilt(app) {
@@ -182,7 +183,7 @@ export function buildCropPanel(app) {
     reg.forEach((c) => c.refresh());
   }
   refresh();
-  return { el: el('div', { class: 'panel-view' }, sec.el, expand.el), refresh, swap, rot };
+  return { el: el('div', { class: 'panel-view' }, sec.el, aiOn() ? expand.el : null), refresh, swap, rot };
 }
 
 // ------------------------------------------------------------------ overlay

@@ -13,7 +13,7 @@
 //           OkLCh, curves, vignette, grain
 // Textures keep image row 0 at v = 0; only FINAL knows screen/crop geometry (3x3 matrices).
 
-import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST, RAW_CHROMA, SCENE_CONTRAST, toneK, sceneWhiteGain } from './color.js';
+import { OK_M1, OK_M1_INV, OK_M2, OK_M2_INV, REC2020_TO_SRGB, SRGB_TO_REC2020, REC2020_LUMA, MIDDLE_GREY, RAW_TWIST, RAW_CHROMA, SCENE_CONTRAST, toneK, sceneWhiteGain, REC2020_TO_PRO, PRO_TO_REC2020, COLOR_BANDS, COLOR_ROLLOFF, COLOR_CURVE_LUT } from './color.js';
 
 // Emit a JS row-major matrix as a GLSL mat3 applied as `M * v`.
 const glmat = (m) => `mat3(${[0, 1, 2].map((c) => [0, 1, 2].map((r) => m[r][c].toFixed(9)).join(', ')).join(', ')})`;
@@ -436,6 +436,7 @@ uniform vec2 uSharp, uNR;
 uniform vec4 uVig;
 uniform vec3 uGrain;
 uniform int uCamOn;
+uniform int uProfile;
 uniform int uLutOn;
 uniform highp sampler3D uLut;
 uniform float uLutN, uLutAmt;
@@ -458,6 +459,37 @@ vec3 cameraLook(vec3 disp) {
   int i0 = int(mod(k0 + 8.0, 8.0)), i1 = (i0 + 1) % 8;
   float g = mix(uCamGain[i0], uCamGain[i1], f), sh = mix(uCamShift[i0], uCamShift[i1], f);
   return unOklab(vec3(L, C * g * cos(h + sh), C * g * sin(h + sh)));
+}
+
+// Rembrandt Color (see PROFILES in color.js): smooth hue bands in linear ProPhoto HSV, saturation
+// rolling off near white, then a mild S curve that keeps hue (darkest and brightest channel through
+// the curve, the middle one in proportion). On display-linear Rec.2020.
+const mat3 TO_PRO = ${glmat(REC2020_TO_PRO)};
+const mat3 FROM_PRO = ${glmat(PRO_TO_REC2020)};
+const float PCURVE[33] = float[33](${COLOR_CURVE_LUT.map((v) => v.toFixed(5)).join(', ')});
+float enc1(float c) { c = clamp(c, 0.0, 1.0); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+float dec1(float c) { c = clamp(c, 0.0, 1.0); return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+float pcurve(float x) { float t = clamp(x, 0.0, 1.0) * 32.0; int i = min(31, int(t)); return mix(PCURVE[i], PCURVE[i + 1], t - float(i)); }
+vec3 profileColor(vec3 disp) {
+  vec3 p = clamp(TO_PRO * max(disp, 0.0), 0.0, 1.0);
+  float mx = max(p.r, max(p.g, p.b)), mn = min(p.r, min(p.g, p.b)), d = mx - mn;
+  if (mx > 1e-6 && d > 1e-6) {
+    float h = mx == p.r ? mod((p.g - p.b) / d, 6.0) : mx == p.g ? (p.b - p.r) / d + 2.0 : (p.r - p.g) / d + 4.0;
+    float hue = h * 60.0, sat = d / mx, v = enc1(mx);
+    float shift = 0.0, sm = 1.0, vm = 1.0;
+${COLOR_BANDS.map(([c, w, sh, sa, va]) => `    { float dd = mod(hue - ${c.toFixed(1)} + 180.0, 360.0) - 180.0; if (abs(dd) < ${w.toFixed(1)}) { float k = 0.5 + 0.5 * cos(PI * dd / ${w.toFixed(1)}); shift += ${sh.toFixed(2)} * k; sm *= 1.0 + ${(sa - 1).toFixed(3)} * k; vm *= 1.0 + ${(va - 1).toFixed(3)} * k; } }`).join('\n')}
+    float sf = smoothstep(0.0, 0.35, sat), roll = 1.0 - ${COLOR_ROLLOFF.toFixed(2)} * smoothstep(0.7, 1.0, v);
+    hue = mod(hue + shift * sf, 360.0);
+    sat = clamp(sat * (1.0 + (sm - 1.0) * sf) * roll, 0.0, 1.0);
+    float V = dec1(v * (1.0 + (vm - 1.0) * sf));
+    float hh = hue / 60.0, c = V * sat, x = c * (1.0 - abs(mod(hh, 2.0) - 1.0));
+    vec3 q = hh < 1.0 ? vec3(c, x, 0.0) : hh < 2.0 ? vec3(x, c, 0.0) : hh < 3.0 ? vec3(0.0, c, x) : hh < 4.0 ? vec3(0.0, x, c) : hh < 5.0 ? vec3(x, 0.0, c) : vec3(c, 0.0, x);
+    p = q + (V - c);
+  }
+  vec3 e = vec3(enc1(p.r), enc1(p.g), enc1(p.b));
+  float lo = min(e.r, min(e.g, e.b)), hi = max(e.r, max(e.g, e.b)), a = pcurve(lo), b = pcurve(hi);
+  e = hi - lo > 1e-6 ? a + (b - a) * (e - lo) / (hi - lo) : vec3(a);
+  return FROM_PRO * vec3(dec1(e.r), dec1(e.g), dec1(e.b));
 }
 
 float hash(vec2 p) {
@@ -592,6 +624,7 @@ void main() {
 
   vec3 disp = displayTransform(rgb);              // display-linear Rec.2020
   if (uCamOn == 1) disp = cameraLook(disp);
+  else if (uProfile == 1) disp = profileColor(disp);
   vec3 lin = gamutMap(TO_SRGB * disp, uPathToWhite == 1);
   vec3 s = encode(lin);
 

@@ -14,6 +14,7 @@ import { warpActive } from './warp.js';
 import { findSpots } from './blemish.js';
 import { detectFaces, ai } from './ai/ai.js';
 import { PORTRAIT, portraitAmount, setPortrait } from './portrait.js';
+import { aiOn } from './workspace.js';
 
 // Tool settings shared by the overlay and the panel (new spots use them; the selected spot shows them).
 export const retouchState = { mode: 'fill', size: 0.02, feather: 0.5, opacity: 1, selected: -1, hide: false, spots: false, spotLevel: 50, dustSensitivity: 0.5, tried: [], keepMoles: true, sensitivity: 0.5, kept: [], keptFor: null };
@@ -366,7 +367,8 @@ export function buildRetouchPanel(app) {
   // The sliders edit the selected spot, or the settings for new ones.
   const setting = (key, v) => { S[key === 'radius' ? 'size' : key] = v; const op = sel(); if (op) { op[key] = v; app.requestRender(); app.drawOverlay(); } };
   // The mode is for new spots, and switches a selected heal or clone spot; a fill stays a fill.
-  const mode = segmented([{ value: 'fill', label: 'Generative' }, { value: 'heal', label: 'Heal' }, { value: 'clone', label: 'Clone' }], S.mode, (v) => {
+  if (!aiOn() && S.mode === 'fill') S.mode = 'heal';   // Generative needs AI (Settings → Workspace)
+  const mode = segmented([...(aiOn() ? [{ value: 'fill', label: 'Generative' }] : []), { value: 'heal', label: 'Heal' }, { value: 'clone', label: 'Clone' }], S.mode, (v) => {
     S.mode = v;
     const op = sel();
     if (op && op.mode !== 'fill' && v !== 'fill') { op.mode = v; app.requestRender(); app.commit(); }
@@ -424,7 +426,7 @@ export function buildRetouchPanel(app) {
   hide.el.title = 'Show or hide spots (H)';
   const spots = section('Remove spots', { id: 'rt-spots', badge: { icon: 'erase', color: 'linear-gradient(135deg,#f472b6,#db2777)' } });
   spots.body.append(
-    el('p', { class: 'hint rt-intro' }, 'Paint over anything to remove it. Generative fills it with what was most likely behind it; Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).'),
+    el('p', { class: 'hint rt-intro' }, aiOn() ? 'Paint over anything to remove it. Generative fills it with what was most likely behind it; Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).' : 'Paint over anything to remove it. Heal and Clone copy from a matching part of the photo (drag the source circle to choose your own).'),
     el('div', { class: 'field' }, el('span', {}, 'Mode'), mode.el),
     size.el, feather.el, opacity.el, hide.el, visualize.el, spotLevel.el, dust,
     el('div', { class: 'row-btns rt-actions' }, newSrc, del, clear),
@@ -453,6 +455,6 @@ export function buildRetouchPanel(app) {
   })));
   portraits.body.append(...retouch.map((r) => r.el), el('p', { class: 'hint' }, 'Found by AI on this device. Each is a mask you can fine-tune in Masks.'),
     el('div', { class: 'divider' }), el('div', { class: 'row-btns' }, auto), keep.el, sens.el, autoNote);
-  const root = el('div', { class: 'panel-view retouch' }, spots.el, distractions.el, portraits.el);
+  const root = el('div', { class: 'panel-view retouch' }, spots.el, aiOn() ? distractions.el : null, aiOn() ? portraits.el : null);
   return { el: root, refresh };
 }

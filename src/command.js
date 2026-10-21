@@ -12,6 +12,7 @@ import { buildAIPanel } from './ai/panel-ai.js';
 import { createStudio } from './studio.js';
 import { measureTilt, straightened } from './tool-crop.js';
 import { isTauri } from './platform.js';
+import { aiOn, shown, onWorkspaceChange } from './workspace.js';
 
 const c100 = (v) => clamp(Math.round(v), -100, 100);
 const add = (key, d, lo = -100, hi = 100) => (p, k) => ({ [key]: clamp(Math.round((p[key] + d * k) * 100) / 100, lo, hi) });
@@ -151,6 +152,7 @@ export function interpret(text, p) {
     const s = clause.trim();
     if (!s) continue;
     const x = exact(s, next);
+    if (x && x.path.startsWith('ai.') && !aiOn()) continue;   // AI is off (Settings → Workspace)
     if (x) {
       setPath(next, x.path, x.value);
       labels.push(`${x.label} ${x.value === 0 && RESET.test(s) ? 'reset' : `to ${fmtV(x.value, x.dp)}`}`);
@@ -159,7 +161,9 @@ export function interpret(text, p) {
     const hit = INTENTS.find(([re]) => re.test(s));
     if (!hit) continue;
     const k = strength(s);
-    deepMerge(next, hit[2](next, k));
+    const patch = hit[2](next, k);
+    if (patch.ai && !aiOn()) continue;
+    deepMerge(next, patch);
     labels.push(`${k < 0 ? 'Less ' : ''}${hit[1]}${Math.abs(k) === 2 ? ' ++' : Math.abs(k) === 0.5 ? ' (a little)' : ''}`);
   }
   return labels.length ? { next, labels } : null;
@@ -309,10 +313,12 @@ export function createCommandBar(app, mount = null) {
 
   // Every slider and section, by name, from the Edit and AI panels (built once, off screen).
   let index = null;
+  onWorkspaceChange(() => { index = null; });
   const buildIndex = () => {
-    index = [{ label: 'Crop & rotate', tool: 'crop' }, { label: 'Masks', tool: 'masks' }, { label: 'Remove spots', tool: 'retouch' }, { label: 'Presets', tool: 'presets' }];
-    for (const [tool, build] of [['edit', buildEditPanel], ['ai', buildAIPanel]]) {
+    index = [{ label: 'Crop & rotate', tool: 'crop' }, { label: 'Masks', tool: 'masks' }, { label: 'Remove spots', tool: 'retouch' }, { label: 'Presets', tool: 'presets' }].filter((c) => shown(c.tool));
+    for (const [tool, build] of [['edit', buildEditPanel], ...(shown('ai') ? [['ai', buildAIPanel]] : [])]) {
       for (const sec of build(app).el.querySelectorAll('.sec')) {
+        if (sec.hidden) continue;
         const title = sec.querySelector('.sec-title')?.textContent || '';
         index.push({ label: title, tool, section: title });
         for (const l of sec.querySelectorAll('.ctl label')) index.push({ label: l.textContent, tool, section: title, control: l.textContent });

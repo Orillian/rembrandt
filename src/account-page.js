@@ -13,6 +13,7 @@ import { backendConfigured, CONFIG } from './config.js';
 import { DOWNLOAD_MB as clipMB } from './ai/clip.js';
 import { exportDefaults, saveExportDefaults, WATERMARK } from './export.js';
 import { prefs, savePrefs } from './account.js';
+import * as WS from './workspace.js';
 import { getAppearance, setAppearance } from './theme.js';
 import { signInForm, openExternal } from './account-online.js';
 import { updateRow } from './update-check.js';
@@ -29,6 +30,7 @@ const SECTIONS = [
   ...(isMobileApp ? [['unlock', 'Unlock', 'sparkle']] : []),
   ...(backendConfigured() ? [['cloud', 'Cloud sync', 'cloud']] : []),
   ['prefs', 'Preferences', 'gear'],
+  ['workspace', 'Workspace', 'sliders'],
   ['storage', 'Storage', 'laptop'],
   ['sharing', 'Sharing', 'link'],
   ['data', 'Data & privacy', 'shield'],
@@ -395,7 +397,7 @@ export function buildAccountPage(app, hooks) {
       card('Appearance', field('Theme', look.el), toggle('Opening animation', () => prefs.splash !== false, (v) => { prefs.splash = v; savePrefs(); }).el),
       card('Editing', field('RAW development', rawQ.el, 'Detailed is slower but resolves fine texture better.'), field('Preview resolution', prevQ.el, 'Sharp uses more graphics memory.'),
         field('Keyboard shortcuts', keys.el, 'Lightroom: P, X and U flag in Edit too, V black & white, K masks, Shift+P presets, ⌘K keywords, ⌘U auto, ⌘⇧R reset, ⌘⇧E export, ⌘⇧I import.')),
-      smartCard(),
+      WS.aiOn() ? smartCard() : null,
       card('Performance',
         field('While you edit', perfSeg.el, 'How much of the graphics card background work may use while you work. Smooth editing gives it the smallest slices.'),
         field('Heavy AI work runs', whenSeg.el, 'AI Denoise, Super Resolution and merges. Away means no input for a minute, or Rembrandt in the background; it then runs at full speed.'),
@@ -409,6 +411,42 @@ export function buildAccountPage(app, hooks) {
         field('Your name', textPref('artist', 'Shown as the author of exported photos'), null),
         field('Copyright', textPref('copyright', '© 2026 Your Name'), 'Written into every exported photo. Location is never included.')),
       card('Watermark', ...watermarkFields()),
+    ];
+  }
+
+  // Workspace: show only the tools and sections you use, and turn AI off altogether.
+  function workspace() {
+    const ai = WS.aiOn();
+    const tile = (item, { locked = false, needsAi = false } = {}) => {
+      const off = needsAi || (!locked && !WS.shown(item.id));
+      const b = el('button', {
+        class: 'ws-tile' + (off ? ' off' : '') + (locked || needsAi ? ' fixed' : ''), type: 'button',
+        'aria-pressed': String(!off), disabled: locked || needsAi ? true : null,
+        title: locked ? 'Always shown' : needsAi ? 'Needs AI, which is off' : off ? `Show ${item.label}` : `Hide ${item.label}`,
+      }, icon(item.icon, 'i ws-icon'), el('span', { class: 'ws-text' }, el('span', { class: 'ws-label' }, item.label),
+        el('span', { class: 'ws-state' }, locked ? 'Always shown' : needsAi ? 'Needs AI' : off ? 'Hidden' : 'Shown')),
+      icon(off ? 'plus' : 'check', 'i ws-mark'));
+      if (!locked && !needsAi) b.addEventListener('click', () => { WS.setShown(item.id, off); render(); });
+      return b;
+    };
+    const group = (title, hint, tiles) => el('div', { class: 'ws-group' },
+      el('div', { class: 'ws-head' }, el('h3', {}, title), hint ? el('span', { class: 'hint' }, hint) : null),
+      el('div', { class: 'ws-grid' }, ...tiles));
+    const aiSwitch = toggle('Use AI on this device', () => WS.aiOn(), (v) => { WS.setAi(v); render(); });
+    const reset = button('Show everything', () => { WS.resetWorkspace(); render(); toast('Every tool and section is shown, and AI is on'); }, 'sm', 'reset');
+    reset.disabled = !WS.customised();
+    return [
+      card('AI', aiSwitch.el,
+        el('p', { class: 'hint' }, ai
+          ? 'Masks found by AI, Generative Remove and Expand, AI Denoise, Super Resolution, the AI panel, face sculpting, smart search and Edit like me. Every model runs on this device; nothing is uploaded.'
+          : 'AI is off. Its tools are hidden and no model is downloaded or run. AI adjustments already on your photos are kept, and show again when you turn AI back on.'),
+        ai ? null : el('p', { class: 'hint' }, 'The check that runs before a photo is synced to Cloud stays on while Cloud sync is on.')),
+      card('Panels',
+        el('p', { class: 'lead' }, 'Hide what you don’t use. Hidden tools and sections keep their settings on every photo, and still apply.'),
+        group('Tools', 'The tabs above the panel', [tile({ id: 'edit', label: 'Edit', icon: 'edit' }, { locked: true }), ...WS.TOOLS.map((t) => tile(t, { needsAi: t.ai && !ai }))]),
+        group('Edit panel', 'Sections under Light', [tile({ id: 'light', label: 'Light', icon: 'sun' }, { locked: true }), ...WS.SECTIONS.map((t) => tile(t))]),
+        group('Window', null, WS.EXTRAS.map((t) => tile(t))),
+        el('div', { class: 'row-btns' }, reset)),
     ];
   }
 
@@ -496,7 +534,7 @@ export function buildAccountPage(app, hooks) {
   }
   onUnlockChange(() => { if (current === 'unlock' && root.isConnected) render(); });
 
-  const BUILD = { unlock, cloud: cloudSync, storage, sharing, prefs: preferences, data };
+  const BUILD = { unlock, cloud: cloudSync, storage, sharing, prefs: preferences, workspace, data };
 
   function render() {
     nav.textContent = '';

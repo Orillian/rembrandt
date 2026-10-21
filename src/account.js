@@ -1,7 +1,7 @@
 // Local profile and preferences (stored on this device).
 const KEY = 'lumen:prefs';
 // Phones get lighter previews by default: less graphics memory, and faster on battery.
-const phone = matchMedia('(pointer: coarse) and (max-width: 1100px)').matches;
+const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse) and (max-width: 1100px)').matches;
 export const prefs = (() => {
   // previewAuto: the working size is picked from how fast the graphics card is (see autoPreviewLong).
   const d = { name: '', rawQuality: 3, previewLong: phone ? 1920 : 2560, previewAuto: true };

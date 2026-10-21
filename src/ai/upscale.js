@@ -17,6 +17,7 @@
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 
 import { breathe, chunker, pacer, glFinished } from '../jobs.js';
+import { assertAi } from '../workspace.js';
 
 const LAYERS = Array.from({ length: 34 }, (_, l) => ({ oc: l === 33 ? 48 : 64, ic: l === 0 ? 3 : 64, prelu: l < 33 }));
 const PAD = 24;          // tile overlap, in input pixels
@@ -469,6 +470,7 @@ export async function gpuLabel() {
 // Enlarges (scale 2 or 4) or restores (scale 1) `source` (an ImageBitmap, canvas or ImageData, sRGB).
 // Resolves an ImageData of the result. `onProgress(fraction)`; `signal` (AbortSignal) cancels.
 export async function upscale(source, { scale = 2, denoise = 0.5, tile = 0, onProgress, signal, force, job } = {}) {
+  assertAi();
   if (![1, 2, 4].includes(scale)) throw new Error('Scale must be 1, 2 or 4');
   let img = source;
   if (!(img instanceof ImageData)) {

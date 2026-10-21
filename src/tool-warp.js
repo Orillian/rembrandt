@@ -5,6 +5,7 @@ import { slider, segmented, button, section } from './ui.js';
 import { A } from './geometry.js';
 import { detectFaces } from './ai/ai.js';
 import { faceShape } from './warp.js';
+import { aiOn } from './workspace.js';
 
 export const warpState = { mode: 'push', size: 0.06, strength: 0.6 };
 const MAX_STROKES = 400;
@@ -118,5 +119,6 @@ export function buildWarpPanel(app) {
     if (W().faces) note.textContent = W().faces.length ? `${W().faces.length} face${W().faces.length === 1 ? '' : 's'} found.` : 'No faces found in this photo.';
   }
   refresh();
-  return { el: el('div', { class: 'panel-view retouch' }, face.el, liq.el), refresh };
+  // Face sculpting finds faces with AI; Liquify needs none.
+  return { el: el('div', { class: 'panel-view retouch' }, aiOn() ? face.el : null, liq.el), refresh };
 }

@@ -9,6 +9,7 @@
 // render, so it follows all later edits and exports. Nothing leaves the device.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 import * as catalog from './catalog.js';
+import { assertAi } from './workspace.js';
 
 let session = null;
 async function model() {
@@ -26,6 +27,7 @@ async function model() {
 // Fills the holes of an 8-bit RGB image (`rgb` interleaved, `hole` 1 where to fill), w × h.
 // Returns the filled image as interleaved RGB bytes.
 export async function inpaint(rgb, hole, w, h) {
+  assertAi();
   const { ort, s } = await model();
   const n = w * h, img = new Uint8Array(3 * n), mask = new Uint8Array(n);
   for (let i = 0; i < n; i++) {

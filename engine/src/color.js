@@ -112,6 +112,45 @@ export function rawLook(rgb2020) {
   return fromOklab([L, C * Math.cos(h2), C * Math.sin(h2)]).map((v) => Math.max(v, 0));
 }
 
+// ------------------------------------------------------------------ profiles (RAWs)
+
+// Rembrandt Standard is the rendering above, fitted to Camera Raw. Rembrandt Color layers a look on
+// it, as Adobe Color does on Adobe Standard: a mild S curve and a few smooth hue, saturation and
+// brightness shifts, with saturation rolling off near white. The look follows RAWmakase Color
+// (src/camera_profiles/open.rs, MIT licence, © RAWmakase contributors; see NOTICE.md): HSV in linear
+// ProPhoto RGB, value on the sRGB-encoded scale, applied here to the display colour.
+export const PROFILES = { standard: 'Rembrandt Standard', color: 'Rembrandt Color' };
+// Linear sRGB <-> ProPhoto RGB (with Bradford D65 <-> D50), as RAWmakase uses.
+const SRGB_TO_PRO = [[0.529345, 0.330072, 0.140583], [0.098374, 0.873462, 0.028164], [0.016883, 0.117673, 0.865444]];
+export const REC2020_TO_PRO = matmul(SRGB_TO_PRO, REC2020_TO_SRGB);
+export const PRO_TO_REC2020 = inv3(REC2020_TO_PRO);
+// [hue °, half-width °, hue shift °, saturation ×, value ×] around ProPhoto HSV hues:
+// red ≈ 10, skin ≈ 30, yellow ≈ 57, foliage ≈ 90, aqua ≈ 200, sky ≈ 235.
+export const COLOR_BANDS = [
+  [8, 22, 0, 1.04, 1],         // reds a touch richer
+  [31, 20, 1.5, 0.97, 1.01],   // skin slightly away from red, a little softer
+  [57, 20, -2.5, 1.03, 1],     // yellows warmer
+  [92, 30, 0, 0.95, 1],        // foliage quieter, so greens don't turn neon
+  [238, 26, 0, 1, 0.97],       // sky a little deeper (Standard already turns violet blues toward cyan)
+];
+export const COLOR_ROLLOFF = 0.1;
+const COLOR_CURVE = [[0, 0], [0.25, 0.244], [0.5, 0.505], [0.75, 0.768], [1, 1]];
+// Natural cubic spline through the points, sampled at n + 1 steps (encoded sRGB in and out).
+function naturalSpline(pts, n) {
+  const k = pts.length, h = [], al = [0], l = [1], mu = [0], z = [0], c = Array(k).fill(0), b = [], d = [];
+  for (let i = 0; i < k - 1; i++) h.push(pts[i + 1][0] - pts[i][0]);
+  for (let i = 1; i < k - 1; i++) al.push((3 / h[i]) * (pts[i + 1][1] - pts[i][1]) - (3 / h[i - 1]) * (pts[i][1] - pts[i - 1][1]));
+  for (let i = 1; i < k - 1; i++) { l[i] = 2 * (pts[i + 1][0] - pts[i - 1][0]) - h[i - 1] * mu[i - 1]; mu[i] = h[i] / l[i]; z[i] = (al[i] - h[i - 1] * z[i - 1]) / l[i]; }
+  for (let j = k - 2; j >= 0; j--) { c[j] = (z[j] ?? 0) - (mu[j] ?? 0) * c[j + 1]; b[j] = (pts[j + 1][1] - pts[j][1]) / h[j] - (h[j] * (c[j + 1] + 2 * c[j])) / 3; d[j] = (c[j + 1] - c[j]) / (3 * h[j]); }
+  return Array.from({ length: n + 1 }, (_, s) => {
+    const x = s / n; let j = 0;
+    while (j < k - 2 && x > pts[j + 1][0]) j++;
+    const t = x - pts[j][0];
+    return Math.min(1, Math.max(0, pts[j][1] + b[j] * t + c[j] * t * t + d[j] * t * t * t));
+  });
+}
+export const COLOR_CURVE_LUT = naturalSpline(COLOR_CURVE, 32);
+
 // ------------------------------------------------------------------ display transform (Hill curve)
 
 // y = x^c / (x^c + k), with k chosen so scene middle grey maps to display middle grey.

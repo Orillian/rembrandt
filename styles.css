@@ -398,6 +398,7 @@ body.dragging .drop-veil { display: grid; }
 .panel-view { padding-bottom: 32px; }
 body:not(.has-image) .panel-body { opacity: 0.35; pointer-events: none; }
 .edit-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 0.85fr) 32px; align-items: stretch; gap: 6px; padding: 6px 12px 8px; }
+.edit-tools.no-ai { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 0.85fr) 32px; }
 /* Auto, Color, B&W and More are four equal cells: the Color / B&W pair is unwrapped into the grid. */
 .edit-tools > .grow { display: none; }
 .edit-tools .treatment { display: contents; }
@@ -1357,3 +1358,31 @@ body[data-mode="library"] .ask-btn, body[data-mode="account"] .ask-btn { display
 .cmpv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmpv-flag.pick { color: var(--accent); font-weight: 600; }
 .cmpv-flag.reject { color: var(--dim); text-decoration: line-through; }
+
+/* Edit panel: the RAW profile, above the sliders. */
+.profile-row { display: flex; align-items: center; gap: 10px; padding: 2px 12px 10px; }
+.profile-row[hidden] { display: none; }
+.profile-row .profile-label { flex: none; width: 64px; color: var(--muted); font-size: 12px; }
+.profile-row .profile-pick { flex: 1; min-width: 0; justify-content: space-between; height: 30px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: 2px; background: transparent; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.profile-row .profile-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-row .profile-pick .chev { width: 12px; height: 12px; transform: rotate(90deg); color: var(--muted); }
+body.ws-no-studio .nav-ask { display: none; }
+
+/* Settings → Workspace: tiles that show or hide a tool or a panel section. */
+.ws-group { display: flex; flex-direction: column; gap: 8px; }
+.ws-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ws-head h3 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.ws-tile { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; align-items: center; gap: 10px; min-height: 50px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--seg-on); color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background 0.12s, border-color 0.12s, color 0.12s; }
+.ws-tile:hover:not(:disabled) { border-color: var(--accent); }
+.ws-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ws-tile .ws-icon { width: 18px; height: 18px; color: var(--accent); }
+.ws-tile .ws-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-tile .ws-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-tile .ws-state { font-size: 11px; color: var(--muted); }
+.ws-tile .ws-mark { width: 14px; height: 14px; color: var(--accent); }
+.ws-tile.off .ws-mark, .ws-tile.fixed .ws-mark { color: var(--muted); }
+.ws-tile.fixed .ws-mark { visibility: hidden; }
+.ws-tile.off { background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); }
+.ws-tile.off .ws-icon { color: var(--muted); }
+.ws-tile.fixed { cursor: default; opacity: 0.75; }
