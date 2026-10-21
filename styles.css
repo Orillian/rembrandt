@@ -374,8 +374,8 @@ body.dragging .drop-veil { display: grid; }
 
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid var(--line-strong); }
 .rail.tool-tabs { display: flex; gap: 2px; margin: 8px 8px 0; padding: 2px; border-radius: 3px; background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
-.tool-tabs .rail-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 0 4px; border: none; border-radius: 3px; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 550; cursor: pointer; }
-.tool-tabs .rail-btn .i { width: 17px; height: 17px; }
+.tool-tabs .rail-btn { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 0; border: none; border-radius: 3px; background: transparent; color: var(--muted); font-size: 10.5px; font-weight: 550; cursor: pointer; }
+.tool-tabs .rail-btn .i { width: 18px; height: 18px; }
 .tool-tabs .rail-btn:hover { color: var(--text); }
 .tool-tabs .rail-btn.on { background: var(--seg-on); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .tool-tabs .rail-btn.on .i { color: var(--accent); }
