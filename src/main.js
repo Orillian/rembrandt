@@ -80,7 +80,7 @@ import { signature, similarity, THRESHOLD as SIMILAR_THRESHOLD, MAX_RESULTS as S
 import { estimateAirlight } from '../engine/src/pipeline.js';
 import { shown, aiOn, onWorkspaceChange } from './workspace.js';
 import { hdrFromOne, HDR_ONE } from './hdr-one.js';
-import { openFeedback, track, askAboutUsage } from './feedback.js';
+import { openFeedback, track, askAboutUsage, apiAvailable } from './feedback.js';
 
 const $ = (id) => document.getElementById(id);
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
@@ -3015,7 +3015,7 @@ $('btnAccount').addEventListener('click', (e) => popMenu(e.currentTarget, [
   { sep: true },
   { label: 'Import photos…', icon: 'open', onClick: () => openImporter() },
   isTouch ? null : { label: 'Keyboard shortcuts', icon: 'keyboard', onClick: () => $('helpDialog').showModal() },
-  { label: 'Send feedback…', icon: 'send', onClick: () => openFeedback(app) },
+  { label: apiAvailable() ? 'Send feedback…' : 'Open an issue on GitHub', icon: 'send', onClick: () => openFeedback(app) },
 ]));
 // Rembrandt is free. With a donation page configured, a heart in the top bar links to it.
 function openSupport() {

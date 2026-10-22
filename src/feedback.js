@@ -12,6 +12,7 @@ import { icon } from './icons.js';
 import { CONFIG } from './config.js';
 import { prefs, savePrefs } from './account.js';
 import { isTauri, isIOS, isAndroid } from './platform.js';
+import { openExternal } from './account-online.js';
 
 const api = () => (CONFIG.apiUrl || '').replace(/\/$/, '');
 export const apiAvailable = () => !!api();
@@ -45,7 +46,16 @@ function details(app) {
 
 // ------------------------------------------------------------------ Send feedback
 
+// A new GitHub issue with the app version and operating system filled in.
+export function openIssue() {
+  const body = `\n\n---\nRembrandt ${version()} · ${platformName()}`;
+  const url = `https://github.com/${CONFIG.repo}/issues/new?body=${encodeURIComponent(body)}`;
+  const ext = openExternal();
+  if (ext) ext(url); else window.open(url, '_blank', 'noopener');
+}
+
 export function openFeedback(app, { kind = 'idea' } = {}) {
+  if (!apiAvailable()) return openIssue();
   const dlg = el('dialog', { class: 'dlg feedback-dlg' });
   const done = () => { dlg.close(); dlg.remove(); };
   let k = kind;

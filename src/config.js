@@ -43,8 +43,9 @@ const DEFAULTS = {
   clipBase: '',
 
   // The Rembrandt API (rembrandt-cloud/api): Send feedback, product-update sign-ups and the opt-in
-  // anonymous usage counts. Empty turns all three off (feedback then links to GitHub issues).
-  apiUrl: 'https://api.rembrandteditor.dev',
+  // anonymous usage counts. Empty turns all three off (feedback then opens a GitHub issue).
+  // The official API is api.rembrandteditor.dev; it is off until that service is set up.
+  apiUrl: '',
 };
 
 export const CONFIG = { ...DEFAULTS, ...(globalThis.LUMEN_CONFIG || {}), prices: { ...DEFAULTS.prices, ...(globalThis.LUMEN_CONFIG?.prices || {}) } };
