@@ -125,14 +125,19 @@ export async function decodeCameraJpeg(file, long) {
   return decodeEmbedded(file, long).catch(() => null);
 }
 
+// Bytes a caller already read into `file.bytes` (an ArrayBuffer). Not Blob.prototype.bytes(), the
+// method every File has in Safari, the Mac and Linux apps (WebKit) and Firefox.
+const readBytes = (file) => (file.bytes instanceof ArrayBuffer ? file.bytes : null);
+
 async function decodeEmbedded(file, long = 0) {
-  const u8 = new Uint8Array(file.bytes || await file.arrayBuffer());
+  const have = readBytes(file);
+  const u8 = new Uint8Array(have || await file.arrayBuffer());
   const o = tiffOrientation(u8);
   const list = findJpegs(u8);
   for (const j of list.slice(0, 4)) {
     try {
       // From the bytes already read when there are any (slicing the File reads storage again).
-      const blob = file.bytes ? new Blob([u8.subarray(j.off, j.end)], { type: 'image/jpeg' }) : file.slice(j.off, j.end, 'image/jpeg');
+      const blob = have ? new Blob([u8.subarray(j.off, j.end)], { type: 'image/jpeg' }) : file.slice(j.off, j.end, 'image/jpeg');
       let bitmap = await createImageBitmap(blob, { imageOrientation: o ? 'none' : 'from-image', premultiplyAlpha: 'none', ...(long ? { resizeWidth: long, resizeQuality: 'medium' } : {}) });
       bitmap = await orient(bitmap, o);
       return { bitmap, kind: ext(file.name).toUpperCase(), raw: true, rawPreview: true };
@@ -183,7 +188,7 @@ function lane(name) {
 export function decodeRawLinear(file, { quality = 3, half = 0, background = false, preview = true, long = 0 } = {}) {
   const L = lane(background ? 'background' : half ? 'quick' : 'full');
   const run = async () => {
-    const buffer = file.bytes ? file.bytes.slice(0) : await file.arrayBuffer();
+    const buffer = readBytes(file)?.slice(0) || await file.arrayBuffer();
     const w = L.get();
     const id = ++seq;
     const r = await new Promise((resolve, reject) => {
