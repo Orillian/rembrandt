@@ -2,9 +2,11 @@
 # Rembrandt installer.
 #
 #   curl -fsSL https://raw.githubusercontent.com/thesnarkitecht/rembrandt/main/install.sh | bash
-#       The desktop app on Linux (x86_64 or arm64): Omarchy / Arch get a pacman package,
-#       Debian / Ubuntu the .deb, Fedora / openSUSE the .rpm, anything else the AppImage in your
-#       home folder (no root needed).
+#       The desktop app.
+#       macOS (Apple silicon or Intel): Rembrandt.app in ~/Applications and a `rembrandt` command,
+#       no administrator password. `rembrandt gui` opens it, `rembrandt update` updates it.
+#       Linux (x86_64 or arm64): Omarchy / Arch get a pacman package, Debian / Ubuntu the .deb,
+#       Fedora / openSUSE the .rpm, anything else the AppImage in your home folder (no root needed).
 #
 #   curl -fsSL https://raw.githubusercontent.com/thesnarkitecht/rembrandt/main/install.sh | bash -s -- --server
 #       rembrandt-server on Linux or macOS: Rembrandt in your browser, editing a folder of photos on
@@ -68,6 +70,8 @@ if [ "$uninstall" = 1 ]; then
   if [ "$OS" = Darwin ]; then
     launchctl unload "$HOME/Library/LaunchAgents/work.light.rembrandt-server.plist" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/work.light.rembrandt-server.plist"
+    pkill -x rembrandt 2>/dev/null || true
+    rm -rf "$HOME/Applications/$APP.app"
   elif need systemctl; then
     systemctl --user disable --now rembrandt-server 2>/dev/null || true
     rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/rembrandt-server.service"
@@ -270,8 +274,68 @@ install_rpm() {
   if need dnf; then sudo_cmd dnf install -y "$tmp/$f"; elif need zypper; then sudo_cmd zypper --non-interactive install --allow-unsigned-rpm "$tmp/$f"; else sudo_cmd rpm -U "$tmp/$f"; fi
 }
 
+# ---------------------------------------------------------------- desktop app (macOS)
+# Into ~/Applications, which belongs to you, so no administrator password. Downloaded with curl, the
+# app isn't quarantined, so macOS opens it without the "can't verify" prompt.
+install_mac() {
+  local f="$APP-macos-x64.dmg"
+  if [ "$ARCH" = aarch64 ]; then f="$APP-macos-arm64.dmg"; fi
+  local dest="$HOME/Applications" mnt="$tmp/mnt" src
+  step "Downloading $f"
+  fetch "$f"; verify "$f"
+  step "Installing into $dest"
+  mkdir -p "$mnt" "$dest" "$BIN_DIR"
+  hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$tmp/$f" >/dev/null || die "couldn't open $f"
+  src="$(ls -d "$mnt"/*.app 2>/dev/null | head -n1)"
+  if [ -z "$src" ]; then hdiutil detach "$mnt" -quiet || true; die "$f didn't contain the app"; fi
+  # Copy beside the old copy and swap, so a failed copy leaves the old version working.
+  rm -rf "$dest/$APP.app.new"
+  ditto "$src" "$dest/$APP.app.new" || { hdiutil detach "$mnt" -quiet || true; die "couldn't copy the app"; }
+  hdiutil detach "$mnt" -quiet || true
+  if pkill -x rembrandt 2>/dev/null; then sleep 1; fi
+  rm -rf "$dest/$APP.app"; mv "$dest/$APP.app.new" "$dest/$APP.app"
+  xattr -dr com.apple.quarantine "$dest/$APP.app" 2>/dev/null || true
+  # Builds without an Apple certificate: an ad-hoc signature keeps the bundle consistent for macOS.
+  codesign --verify "$dest/$APP.app" >/dev/null 2>&1 || codesign --force --deep --sign - "$dest/$APP.app" >/dev/null 2>&1 || true
+  # Show it in Launchpad, Spotlight and Open With.
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$dest/$APP.app" >/dev/null 2>&1 || true
+
+  # The rembrandt command: gui, update, uninstall.
+  cat > "$BIN_DIR/$PKG" <<CLI
+#!/bin/sh
+# Rembrandt on the command line. Installed by $REPO/install.sh.
+INSTALL="https://raw.githubusercontent.com/$REPO/main/install.sh"
+APP_PATH="$dest/$APP.app"
+case "\${1:-gui}" in
+  gui|open) [ \$# -gt 0 ] && shift; exec open -a "\$APP_PATH" "\$@" ;;
+  update) exec /bin/bash -c "\$(curl -fsSL "\$INSTALL")" ;;
+  uninstall) exec /bin/bash -c "\$(curl -fsSL "\$INSTALL")" -s --uninstall ;;
+  version|--version) defaults read "\$APP_PATH/Contents/Info" CFBundleShortVersionString ;;
+  help|-h|--help) printf 'rembrandt [gui] [photos...]  open Rembrandt (with these photos)\nrembrandt update             install the latest version\nrembrandt uninstall          remove Rembrandt (photos and edits stay)\nrembrandt version\n' ;;
+  *) exec open -a "\$APP_PATH" "\$@" ;;
+esac
+CLI
+  chmod +x "$BIN_DIR/$PKG"
+  # Put ~/.local/bin on the PATH for new terminals (zsh is the macOS default).
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) local rc="$HOME/.zprofile"
+       case "${SHELL:-}" in */bash) rc="$HOME/.bash_profile" ;; esac
+       if ! grep -qs "$BIN_DIR" "$rc"; then printf '\n# Added by the Rembrandt installer\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$rc"; fi
+       say "${dim}Open a new terminal window to use the rembrandt command.${off}" ;;
+  esac
+}
+
 if [ "$mode" = server ]; then
   install_server
+  exit 0
+fi
+
+if [ "$OS" = Darwin ]; then
+  install_mac
+  say ""
+  say "${bold}Done.${off} $APP is in your Applications folder (~/Applications). Open it from Launchpad or Spotlight, or run ${bold}rembrandt gui${off}."
+  say "${dim}Update with: rembrandt update (or the Update button in Settings). Remove with: rembrandt uninstall${off}"
   exit 0
 fi
 

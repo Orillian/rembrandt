@@ -42,6 +42,7 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
 
 | Platform | |
 |---|---|
+| macOS · no admin password | `curl -fsSL https://raw.githubusercontent.com/thesnarkitecht/rembrandt/main/install.sh \| bash` |
 | macOS · Apple silicon | [Rembrandt-macos-arm64.dmg](https://github.com/thesnarkitecht/rembrandt/releases/latest/download/Rembrandt-macos-arm64.dmg) |
 | macOS · Intel | [Rembrandt-macos-x64.dmg](https://github.com/thesnarkitecht/rembrandt/releases/latest/download/Rembrandt-macos-x64.dmg) |
 | Windows · x64 | [Rembrandt-windows-x64-setup.exe](https://github.com/thesnarkitecht/rembrandt/releases/latest/download/Rembrandt-windows-x64-setup.exe) |
@@ -49,8 +50,11 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
 | Linux · x86_64 / arm64 | `curl -fsSL https://raw.githubusercontent.com/thesnarkitecht/rembrandt/main/install.sh \| bash` |
 
 All files and checksums: [Releases](https://github.com/thesnarkitecht/rembrandt/releases).
-Builds aren't code-signed yet: on macOS use System Settings → Privacy & Security → **Open Anyway**;
-on Windows **More info → Run anyway**.
+On a Mac the install line puts Rembrandt.app in `~/Applications` without an administrator password
+and adds a `rembrandt` command: `rembrandt gui` opens the app, `rembrandt update` updates it and
+`rembrandt uninstall` removes it. It opens without the "can't verify" prompt.
+Builds aren't code-signed yet: with a downloaded .dmg, use System Settings → Privacy & Security →
+**Open Anyway** on macOS, and **More info → Run anyway** on Windows.
 
 ## Self-host it
 
