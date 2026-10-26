@@ -3061,7 +3061,41 @@ window.addEventListener('drop', (e) => {
   dragDepth = 0;
   document.body.classList.remove('dragging');
   if (e.dataTransfer?.files?.length) openFiles(e.dataTransfer.files);
+  else openDroppedLinks(e.dataTransfer?.getData('text/uri-list'));
 });
+// Some apps drag file links rather than files; the desktop app can open those from disk.
+async function openDroppedLinks(list) {
+  const t = window.__TAURI_INTERNALS__;
+  const paths = (list || '').split(/\r?\n/).filter((l) => l.startsWith('file://')).map((l) => { try { return decodeURIComponent(new URL(l).pathname).replace(/^\/([A-Za-z]:)/, '$1'); } catch { return ''; } }).filter(Boolean);
+  if (!t || !paths.length) return;
+  openFromDisk(await t.invoke('open_paths', { paths }).catch(() => []));
+}
+// Photos on disk (from the desktop app) → the same import as files dropped from Finder or Explorer.
+async function openFromDisk(entries) {
+  const t = window.__TAURI_INTERNALS__;
+  if (!t || !entries?.length) return;
+  const files = [];
+  for (const e of entries) {
+    const buf = await t.invoke('read_file', { path: e.path }).catch(() => null);
+    if (buf) files.push(new File([buf], e.name, { lastModified: e.modified || Date.now() }));
+  }
+  if (files.length) openFiles(files);
+  else app.toast('Couldn’t read those photos');
+}
+// Desktop: photos the app was asked to open (Open With, the Dock icon, another app's "Edit in…").
+function watchOpenedFiles() {
+  const t = window.__TAURI_INTERNALS__;
+  if (!t || isMobileApp) return;
+  let busy = false;
+  const check = async () => {
+    if (busy) return;
+    busy = true;
+    try { await openFromDisk(await t.invoke('take_opened')); } catch { /* an older app without the command */ } finally { busy = false; }
+  };
+  setInterval(check, 1000);
+  window.addEventListener('focus', check);
+  check();
+}
 window.addEventListener('paste', (e) => {
   const files = [...(e.clipboardData?.files || [])];
   if (files.length) openFiles(files);
@@ -3192,6 +3226,7 @@ function watchDesktopSignIn() {
 function boot() {
   initTheme();
   watchDesktopSignIn();
+  watchOpenedFiles();
   startUpdateChecks();
   if (isMobileApp) refreshUnlock();
   canvasBg = cssRGB('--canvas');

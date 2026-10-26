@@ -18,6 +18,11 @@ struct AppState {
     auth_code: Mutex<Option<(String, String)>>,
     /// Folders the user picked; file commands only work inside these.
     roots: Mutex<Vec<PathBuf>>,
+    /// Photos handed to the app (Open With, the Dock icon, another app's "Edit in…", a drop of
+    /// file links) that the web app hasn't picked up yet.
+    opened: Mutex<Vec<PathBuf>>,
+    /// Every such photo: file commands may read these too.
+    files: Mutex<Vec<PathBuf>>,
 }
 
 const PHOTO_EXT: &[&str] = &[
@@ -37,7 +42,7 @@ struct Entry {
 fn allowed(state: &AppState, p: &Path) -> Result<PathBuf, String> {
     let canon = p.canonicalize().map_err(|e| e.to_string())?;
     let roots = state.roots.lock().unwrap();
-    if roots.iter().any(|r| canon.starts_with(r)) {
+    if roots.iter().any(|r| canon.starts_with(r)) || state.files.lock().unwrap().contains(&canon) {
         Ok(canon)
     } else {
         Err("This file is outside your synced folders".into())
@@ -137,6 +142,70 @@ fn list_photos(root: String, state: State<'_, AppState>) -> Result<Vec<Entry>, S
         }
     }
     Ok(out)
+}
+
+/// A photo the app was asked to open: an existing file with a photo extension.
+fn photo_file(p: &Path) -> Option<PathBuf> {
+    let canon = p.canonicalize().ok()?;
+    let ext = canon.extension()?.to_string_lossy().to_lowercase();
+    (canon.is_file() && PHOTO_EXT.contains(&ext.as_str())).then_some(canon)
+}
+
+fn entry(p: &Path) -> Entry {
+    let md = std::fs::metadata(p).ok();
+    let modified = md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Entry { path: p.to_string_lossy().into_owned(), name, size: md.map(|m| m.len()).unwrap_or(0), modified, sidecar: false }
+}
+
+/// Lets the web app read these photos; returns the ones that are photos.
+fn allow_files(state: &AppState, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let found: Vec<PathBuf> = paths.into_iter().filter_map(|p| photo_file(&p)).collect();
+    let mut files = state.files.lock().unwrap();
+    for p in &found {
+        if !files.contains(p) {
+            files.push(p.clone());
+        }
+    }
+    found
+}
+
+/// Queues photos for the web app to open (it asks with `take_opened`) and brings the window up.
+fn queue_open(app: &tauri::AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
+    let state = app.state::<AppState>();
+    let found = allow_files(&state, paths);
+    if found.is_empty() {
+        return;
+    }
+    let mut opened = state.opened.lock().unwrap();
+    for p in found {
+        if !opened.contains(&p) {
+            opened.push(p);
+        }
+    }
+    drop(opened);
+    #[cfg(desktop)]
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Files named on the command line: how Windows and Linux open files with the app.
+#[cfg(desktop)]
+fn arg_paths(argv: impl IntoIterator<Item = String>) -> Vec<PathBuf> {
+    argv.into_iter().filter(|a| !a.starts_with('-') && !a.contains("://")).map(PathBuf::from).collect()
+}
+
+#[tauri::command]
+fn take_opened(state: State<'_, AppState>) -> Vec<Entry> {
+    std::mem::take(&mut *state.opened.lock().unwrap()).iter().map(|p| entry(p)).collect()
+}
+
+/// Photos dropped on the window as file links (some apps drag links rather than files).
+#[tauri::command]
+fn open_paths(paths: Vec<String>, state: State<'_, AppState>) -> Vec<Entry> {
+    allow_files(&state, paths.into_iter().map(PathBuf::from)).iter().map(|p| entry(p)).collect()
 }
 
 #[tauri::command]
@@ -632,9 +701,12 @@ pub fn run() {
     #[cfg(desktop)]
     {
         // A second launch (e.g. from the sign-in deep link) hands its URL to the running app.
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            let urls: Vec<String> = argv.into_iter().filter(|a| a.starts_with("rembrandt://")).collect();
+        // Photos it was asked to open come along too.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let urls: Vec<String> = argv.iter().filter(|a| a.starts_with("rembrandt://")).cloned().collect();
             handle_urls(app, &urls);
+            let cwd = PathBuf::from(cwd);
+            queue_open(app, arg_paths(argv.into_iter().skip(1)).into_iter().map(|p| cwd.join(p)));
         }));
     }
     builder
@@ -648,6 +720,8 @@ pub fn run() {
             {
                 let _ = app.deep_link().register_all();
             }
+            #[cfg(desktop)]
+            queue_open(app.handle(), arg_paths(std::env::args().skip(1)));
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let urls: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();
@@ -657,8 +731,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, take_auth_code, pick_folder, restore_folders, forget_folder, list_photos, read_file, read_text, write_sidecar,
-            write_export, stage_export, open_in_photos, update_check, update_install, update_progress
+            write_export, stage_export, open_in_photos, update_check, update_install, update_progress, take_opened, open_paths
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running the app");
+        .build(tauri::generate_context!())
+        .expect("error while running the app")
+        .run(|_app, _event| {
+            // macOS opens files with an Apple Event: Open With, the Dock icon, Photo Mechanic's
+            // "Edit Photo…" and the like.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                queue_open(_app, urls.into_iter().filter_map(|u| u.to_file_path().ok()));
+            }
+        });
 }
