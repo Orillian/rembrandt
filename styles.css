@@ -185,7 +185,7 @@ h1, h2, h3 { text-wrap: balance; }
 
 /* ------------------------------------------------------------------ layout */
 
-.app { display: grid; grid-template-rows: var(--top-h) minmax(0, 1fr) auto; height: 100%; }
+.app { display: grid; grid-template-rows: var(--top-h) minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); height: 100%; }
 .workspace, .library, .plan-page { grid-row: 2; min-height: 0; }
 body[data-mode="library"] .workspace, body[data-mode="library"] .filmstrip { display: none; }
 body:not([data-mode="library"]) .library { display: none; }
@@ -503,7 +503,7 @@ body.film-hidden #btnToggleFilm .i { transform: none; }
 body.film-hidden .strip { display: none; }
 body.film-hidden .filmstrip { justify-content: flex-end; padding-block: 2px; }
 body.film-hidden .film-actions { flex-direction: row; }
-.strip { flex: 1; display: flex; gap: 5px; height: 56px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.strip { flex: 1; min-width: 0; display: flex; gap: 5px; height: 56px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .thumb { position: relative; flex: none; height: 52px; border-radius: 2px; overflow: hidden; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; background: var(--raised); opacity: 0.75; transition: opacity 0.12s; }
 .thumb:hover { opacity: 1; }
 .thumb.on { outline-color: var(--accent); opacity: 1; }
