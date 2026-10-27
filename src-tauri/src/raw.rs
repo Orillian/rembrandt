@@ -11,7 +11,7 @@ struct LrnImage {
 }
 
 extern "C" {
-    fn lrn_decode(buf: *const c_uchar, size: usize, quality: c_int, half: c_int, out: *mut *mut LrnImage) -> c_int;
+    fn lrn_decode(buf: *const c_uchar, size: usize, quality: c_int, half: c_int, threads: c_int, flip: c_int, out: *mut *mut LrnImage) -> c_int;
     fn lrn_free(h: *mut LrnImage);
     fn lrn_width(h: *const LrnImage) -> c_int;
     fn lrn_height(h: *const LrnImage) -> c_int;
@@ -30,7 +30,9 @@ impl Drop for Image {
 
 fn develop(bytes: &[u8], quality: i32, half: bool) -> Result<Image, String> {
     let mut h: *mut LrnImage = std::ptr::null_mut();
-    let r = unsafe { lrn_decode(bytes.as_ptr(), bytes.len(), quality, half as c_int, &mut h) };
+    // A full-size develop runs in bands on up to six threads (each holds the whole RAW in memory).
+    let threads = threads().min(6) as c_int;
+    let r = unsafe { lrn_decode(bytes.as_ptr(), bytes.len(), quality, half as c_int, threads, -1, &mut h) };
     if r != 0 || h.is_null() {
         return Err(unsafe { CStr::from_ptr(lrn_error(r)) }.to_string_lossy().into_owned());
     }

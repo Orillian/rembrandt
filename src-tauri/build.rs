@@ -86,7 +86,9 @@ fn main() {
         let native = Path::new("../native");
         let mut b = cc::Build::new();
         b.cpp(true).include(native.join("LibRaw")).warnings(false).opt_level(3);
-        b.define("LIBRAW_NOTHREADS", None).define("NO_LCMS", None).define("NO_JASPER", None).define("NO_JPEG", None);
+        // Not LIBRAW_NOTHREADS (the WebAssembly build's setting): that makes LibRaw's decoders share
+        // global state, and the app develops on several threads at once.
+        b.define("NO_LCMS", None).define("NO_JASPER", None).define("NO_JPEG", None);
         if os == "windows" {
             b.define("LIBRAW_NODLL", None).define("_CRT_SECURE_NO_WARNINGS", None).flag_if_supported("/EHsc");
             println!("cargo:rustc-link-lib=ws2_32");
