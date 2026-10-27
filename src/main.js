@@ -707,7 +707,7 @@ const maskOverlay = new MaskOverlay(app);
 const retouchOverlay = new RetouchOverlay(app);
 const warpOverlay = new WarpOverlay(app);
 sliderHooks.start = () => { app.state.sliding = true; lensQuality.draft = !!(app.params && (refocusActive(app.params) || lensActive(app.params))); };
-sliderHooks.end = () => { app.state.sliding = false; lensQuality.draft = false; app.requestRender(); };
+sliderHooks.end = () => { app.state.sliding = false; lastSlide = performance.now(); lensQuality.draft = false; app.requestRender(); };
 
 // ================================================================== library (catalog-backed)
 
@@ -1584,7 +1584,10 @@ async function applySource(e) {
 // the editor works at on screen, so editing starts at once; then, a moment later and in its own
 // worker, at full size for zooming in to 100 % and for exports. Flicking through photos never starts
 // a full develop: it waits until a photo has been open for FULL_AFTER ms (or is zoomed or exported).
-const FULL_AFTER = 1500;
+// It also waits while sliders are moving (and for EDIT_QUIET ms after): a full develop uses several
+// cores and ends in a large upload to the GPU, which would compete with the edit on screen.
+const FULL_AFTER = 1500, EDIT_QUIET = 2000;
+let lastSlide = 0;
 function developRaw(e, { now = false } = {}) {
   if (!e.raw || e.rawError) return;
   if (e.linear && !e.linear.half) return;
@@ -1592,7 +1595,11 @@ function developRaw(e, { now = false } = {}) {
   if (half ? e.rawBusy : e.fullBusy || e.fullError) return;
   if (!half && !now) {
     clearTimeout(e.fullTimer);
-    e.fullTimer = setTimeout(() => { if (app.images[app.cur] === e) developRaw(e, { now: true }); }, FULL_AFTER);
+    e.fullTimer = setTimeout(() => {
+      if (app.images[app.cur] !== e) return;
+      if (app.state.sliding || performance.now() - lastSlide < EDIT_QUIET) developRaw(e);   // later
+      else developRaw(e, { now: true });
+    }, FULL_AFTER);
     return;
   }
   clearTimeout(e.fullTimer);

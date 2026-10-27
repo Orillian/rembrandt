@@ -4,6 +4,10 @@
 // Unlike that build, each decode has its own LibRaw instance, so decodes can run on several threads.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 
+// LibRaw's headers include windows.h on Windows, whose min and max macros would break std::min/max.
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
