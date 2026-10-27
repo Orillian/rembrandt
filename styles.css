@@ -562,7 +562,7 @@ body.film-hidden .film-actions { flex-direction: row; }
 
 /* justified photo rows, grouped by day */
 .ph-group { margin-bottom: 18px; }
-.ph-group-head { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px; height: 40px; margin: 0 -16px; padding: 0 16px; background: var(--lib-bg, var(--bg)); }
+.ph-group-head { display: flex; align-items: center; gap: 8px; height: 40px; margin: 0 -16px; padding: 0 16px; background: var(--lib-bg, var(--bg)); }
 .ph-group-head h2 { margin: 0; font-size: 14px; font-weight: 650; }
 .ph-row { display: flex; gap: 4px; margin-bottom: 4px; }
 .ph { position: relative; flex: none; overflow: hidden; background: var(--raised); cursor: pointer; border-radius: 2px; }

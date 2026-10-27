@@ -38,6 +38,13 @@ No account needed, no subscription, no “we’ve updated our terms” emails.</
   </tr>
 </table>
 
+> [!NOTE]
+> **The editing engine is still changing.** Rembrandt is young, and how edits are processed (RAW
+> development, colour, tone sliders) may change between versions while it improves. The same
+> edit can look slightly different after an update. Your originals are never modified, and your
+> edits are saved as settings in XMP sidecars, so nothing is lost; check important work after
+> updating before you export it again.
+
 ## Download
 
 | Platform | |
