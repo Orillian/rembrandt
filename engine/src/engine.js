@@ -573,6 +573,25 @@ export class Engine {
     const gl = this.gl;
     const out = this.process(p, v.overlayId || null);
     const lod = out.mip ? Math.max(0, Math.log2(this.L.h / v.scale)) : 0;
+    // Draft (while a slider moves on a computer that can't keep up at full resolution): the final pass,
+    // the most expensive per pixel, renders at `draft` × the canvas size and is stretched onto it.
+    const f = v.draft && !v.scissor ? v.draft : 1;
+    if (f < 1) {
+      const W = this.canvas.width, H = this.canvas.height;
+      const tw = Math.max(1, Math.round(W * f)), th = Math.max(1, Math.round(H * f));
+      if (!this.draftT || this.draftT.w !== tw || this.draftT.h !== th) {
+        this.free(this.draftT);
+        this.draftT = this.target(tw, th, { fmt: gl.RGBA8 });
+      }
+      // The small target's pixel (x, y) is the canvas pixel (x W/tw, y H/th): scale the first two
+      // columns of the screen → image and screen → crop matrices (column-major).
+      const sx = W / tw, sy = H / th;
+      const scale = (m) => { const r = Float32Array.from(m); r[0] *= sx; r[1] *= sx; r[2] *= sx; r[3] *= sy; r[4] *= sy; r[5] *= sy; return r; };
+      const vd = { ...v, toImage: scale(v.toImage), toCrop: scale(v.toCrop), lod: lod + Math.log2(1 / f) };
+      this.draw(this.P.final, this.finalUniforms(p, out, vd), this.draftT);
+      this.draw(this.P.blit, { uIn: this.draftT.tex, uSize: [W, H] }, null, W, H);
+      return true;
+    }
     if (v.scissor) { gl.enable(gl.SCISSOR_TEST); gl.scissor(...v.scissor); }
     this.draw(this.P.final, this.finalUniforms(p, out, { ...v, lod }), null, this.canvas.width, this.canvas.height);
     if (v.scissor) gl.disable(gl.SCISSOR_TEST);

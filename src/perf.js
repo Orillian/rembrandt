@@ -28,6 +28,55 @@ const pct = (list, p) => {
   return Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))] * 10) / 10;
 };
 
+// GPU time of each stage of a slider frame on this computer: a few frames rendered as during a drag,
+// each draw timed with a round trip to the GPU (so slower than real frames, but the split is right).
+function gpuStages(app) {
+  const E = app.engine, gl = E?.gl;
+  if (!gl || !app.img) return null;
+  const px = new Uint8Array(4);
+  const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  const names = new Map(Object.entries(E.P).map(([k, v]) => [v, k]));
+  const cost = {};
+  let mips = 0;
+  const draw = E.draw, gen = gl.generateMipmap;
+  E.draw = function (prog, u, tgt, ...rest) {
+    sync();
+    const t0 = performance.now();
+    const r = draw.call(this, prog, u, tgt, ...rest);
+    sync();
+    const k = `${names.get(prog) || 'other'} ${tgt ? `${tgt.w}x${tgt.h}` : 'screen'}`;
+    cost[k] = (cost[k] || 0) + performance.now() - t0;
+    return r;
+  };
+  gl.generateMipmap = function (x) { sync(); const t0 = performance.now(); gen.call(gl, x); sync(); mips += performance.now() - t0; };
+  const was = app.state.sliding, exp = app.params.exposure, n = 6;
+  let total = 0;
+  try {
+    app.state.sliding = true;
+    for (let i = 0; i < n; i++) {
+      app.params.exposure = exp + (i % 2 ? 0.01 : -0.01);
+      sync();
+      const t0 = performance.now();
+      app.renderNow();
+      sync();
+      total += performance.now() - t0;
+    }
+  } finally {
+    E.draw = draw;
+    gl.generateMipmap = gen;
+    app.params.exposure = exp;
+    app.state.sliding = was;
+    app.requestRender();
+  }
+  const round = (v) => Math.round((v / n) * 10) / 10;
+  return {
+    frameMs: round(total),
+    canvas: [gl.canvas.width, gl.canvas.height],
+    level: [E.L?.kind, E.L?.w, E.L?.h],
+    stages: { ...Object.fromEntries(Object.entries(cost).map(([k, v]) => [k, round(v)])), mipmaps: round(mips) },
+  };
+}
+
 export function report(app) {
   const gl = app.engine?.gl;
   let gpu = '';
@@ -53,6 +102,7 @@ export function report(app) {
       cpuMedian: pct(frames.map((f) => f[1]), 0.5),
       cpuP95: pct(frames.map((f) => f[1]), 0.95),
     } : null,
+    gpuStages: (() => { try { return gpuStages(app); } catch (e) { return String(e); } })(),
     events,
   };
 }

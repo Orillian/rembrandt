@@ -531,7 +531,16 @@ const app = {
   // ------------------------------------------------------------ rendering
   requestRender() {
     if (this._raf) return;
-    this._raf = requestAnimationFrame(() => { this._raf = 0; this.renderNow(); });
+    const asked = performance.now();
+    this._raf = requestAnimationFrame(() => {
+      this._raf = 0;
+      // Time since the last frame, for drafts.
+      const now = performance.now();
+      this._interval = this._lastStart ? now - this._lastStart : 0;
+      this._lastStart = now;
+      this.renderNow();
+      this._interval = 0;
+    });
   },
 
   renderParams() {
@@ -579,7 +588,7 @@ const app = {
         E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, scissor: [half, 0, cw - half, ch] });
         E.blitBefore([0, 0, half, ch]);
       }
-    } else E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId });
+    } else E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, draft: draftFactor(t.sliding, d, this._interval) });
     this.drawOverlay();
     this.updateHud();
     this.scheduleHisto();
@@ -1587,6 +1596,30 @@ async function applySource(e) {
 // It also waits while sliders are moving (and for EDIT_QUIET ms after): a full develop uses several
 // cores and ends in a large upload to the GPU, which would compete with the edit on screen.
 const FULL_AFTER = 1500, EDIT_QUIET = 2000;
+
+// Draft frames: while a slider moves, the photo renders at a lower resolution (sharp again the moment
+// it is let go), as Lightroom and Capture One do, but only on computers where full-resolution frames
+// can't keep up. The measure is the median time between frames during drags (a pause of over a second
+// isn't a frame, and the median shrugs off shorter pauses): drafts turn on above DRAFT_SLOW ms (under
+// 30 frames a second) and stay on for later drags, and turn off again after a drag in draft that ran
+// near the display's own rate.
+const DRAFT_SLOW = 33, DRAFT_FAST = 20;
+const draft = { on: false, gaps: [] };
+const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
+function draftFactor(sliding, dpr, interval) {
+  if (!sliding) {
+    if (draft.gaps.length >= 8 && draft.on && median(draft.gaps) < DRAFT_FAST) { draft.on = false; perf.mark('draft-off', { median: Math.round(median(draft.gaps)) }); }
+    draft.gaps = [];
+    return 0;
+  }
+  if (interval > 0 && interval < 1000) {
+    draft.gaps.push(interval);
+    if (draft.gaps.length > 8) draft.gaps.shift();
+    if (!draft.on && draft.gaps.length >= 6 && median(draft.gaps) > DRAFT_SLOW) { draft.on = true; perf.mark('draft-on', { median: Math.round(median(draft.gaps)) }); }
+  }
+  return draft.on ? (dpr >= 2 ? 0.5 : 0.7) : 0;
+}
+
 let lastSlide = 0;
 function developRaw(e, { now = false } = {}) {
   if (!e.raw || e.rawError) return;
@@ -3310,7 +3343,7 @@ function boot() {
     app.engine.hostPasses = chain(refocusPass, localAdjustments, studioPass, lensPass, motionPass);
     refocusPass.wake = () => app.requestRender();
     // Test hook: ?debug exposes the app to automated checks.
-    if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; app._consistent = runConsistent; app._matchRenderer = matchRenderer; }
+    if (new URLSearchParams(location.search).has('debug')) { window.__rembrandt = app; app._draft = draft; app._import = importApi; app._open = openInEditor; app._similar = findSimilar; app._merge = mergePhotos; app._watch = applyWatch; app._library = () => library; app._cull = runCull; app._consistent = runConsistent; app._matchRenderer = matchRenderer; }
     if (!prefs.since) { prefs.since = Date.now(); savePrefs(); }   // for "Since you switched" in Settings
     app.engine.sourcePasses = chainPasses(warpPass, retouchPasses);
     fillHooks.onReady = () => { if (app.engine.L) app.engine.L.baseKey = null; app.requestRender(); };
