@@ -5,7 +5,7 @@
 // Desktop apps use the native commands in src-tauri; when Rembrandt is served by rembrandt-server,
 // folders are inside the server's photos folder; other browsers use the File System Access API
 // (Chrome, Edge, Opera), and the rest can still import a folder once.
-import { RAW_EXT } from './loader.js';
+import { RAW_EXT, readNativeFile } from './loader.js';
 import { uid, el } from './util.js';
 import { button } from './ui.js';
 import { icon } from './icons.js';
@@ -207,7 +207,8 @@ export async function fileFor(src, { ask = true } = {}) {
     return blob ? new File([blob], splitRel(src.rel)[1], { type: blob.type, lastModified: src.lastModified || Date.now() }) : null;
   }
   if (f.kind === 'desktop') {
-    const buf = await invoke('read_file', { path: abs(f, src.rel) }).catch(() => null);
+    const path = abs(f, src.rel);
+    const buf = (await readNativeFile(path)) || (await invoke('read_file', { path }).catch(() => null));
     if (!buf) return null;
     return new File([buf], splitRel(src.rel)[1], { lastModified: src.lastModified || Date.now() });
   }

@@ -17,7 +17,7 @@ import { lensPass, chain, setBackgroundImage, hasBackgroundImage, quality as len
 import { refocusPass, refocusActive } from './ai/refocus.js';
 import { studioPass, motionPass } from './ai/studio.js';
 import { buildAIPanel } from './ai/panel-ai.js';
-import { decodeFile, decodeRawLinear, decodeCameraJpeg, sampleData, thumbnail, ACCEPT, RAW_EXT } from './loader.js';
+import { decodeFile, decodeRawLinear, decodeCameraJpeg, sampleData, thumbnail, ACCEPT, RAW_EXT, readNativeFile } from './loader.js';
 import * as folders from './folders.js';
 import { isPhotoName } from './folders.js';
 import { readXmpSettings, crsToParams, embeddedXmp, sidecarNames, buildXmp } from './xmp.js';
@@ -1626,6 +1626,7 @@ function developRaw(e, { now = false } = {}) {
       if (half) {
         saveThumb();
         app.toast(`RAW developed with LibRaw in ${(lin.meta.decodeMs / 1000).toFixed(1)} s`);
+        prefetchNeighbours();
         developRaw(e, { now: !!e.fullReady });
       } else done();
     })
@@ -1641,6 +1642,36 @@ function developRaw(e, { now = false } = {}) {
       }
     });
 }
+// While a photo is open, the next RAW in the filmstrip (then the previous one) develops at half size in
+// the background into the developed cache, so moving through a shoot opens each one at once. One at a
+// time, only once the open photo has developed and the sliders are still.
+let prefetching = false, prefetchTimer = 0;
+function prefetchNeighbours() {
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(async () => {
+    const cur = app.images[app.cur];
+    if (!cur || prefetching) return;
+    if (app.state.sliding || performance.now() - lastSlide < EDIT_QUIET || (cur.raw && !cur.linear && !cur.rawError) || cur.fullBusy) { prefetchNeighbours(); return; }
+    for (const n of [app.images[app.cur + 1], app.images[app.cur - 1]]) {
+      if (!n || n.linear || developed.has(n.id) || n.offline || n.linked || n.rawError) continue;
+      if (!RAW_EXT.has((n.name || '').split('.').pop().toLowerCase())) continue;
+      prefetching = true;
+      try {
+        const f = await originalFile(n);
+        if (!f || app.images[app.cur] !== cur) return;
+        const lin = await decodeRawLinear(await readable(f), { quality: prefs.rawQuality, half: 1, background: true });
+        if (!n.linear && app.images[app.cur] !== n) {
+          n.raw = true;
+          n.kind ||= n.name.split('.').pop().toUpperCase();
+          keepDeveloped(n.id, lin);
+          perf.mark('prefetched', { ms: lin.meta?.decodeMs, native: !!lin.meta?.native });
+        }
+      } catch { /* it develops when opened instead */ } finally { prefetching = false; }
+      if (app.images[app.cur] !== cur) return;
+    }
+  }, 1000);
+}
+
 // Waits for the open photo's full-size develop (exports, 100 % zoom); starts it if needed.
 function fullDevelop(e) {
   if (!e?.raw || e.rawError || e.fullError || (e.linear && !e.linear.half)) return Promise.resolve();
@@ -1725,6 +1756,7 @@ async function select(i) {
   app.requestRender();
   app.aiEnsure();
   developRaw(e);
+  prefetchNeighbours();
   // Face sliders pasted or from a preset: find this photo's faces for them.
   if (needsFaces(app.params)) ensureFaces(app).then(() => { if (app.images[app.cur] === e) { app.requestRender(); app.refreshPanel(); } }).catch(() => {});
 }
@@ -3102,7 +3134,7 @@ async function openFromDisk(entries) {
   if (!t || !entries?.length) return;
   const files = [];
   for (const e of entries) {
-    const buf = await t.invoke('read_file', { path: e.path }).catch(() => null);
+    const buf = (await readNativeFile(e.path)) || (await t.invoke('read_file', { path: e.path }).catch(() => null));
     if (buf) files.push(new File([buf], e.name, { lastModified: e.modified || Date.now() }));
   }
   if (files.length) openFiles(files);

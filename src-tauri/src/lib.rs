@@ -44,6 +44,12 @@ struct Entry {
     sidecar: bool,
 }
 
+/// The checked path of a file the web app may read (see `allowed`), for the loopback channel.
+#[cfg(desktop)]
+pub(crate) fn readable_path(app: &tauri::AppHandle, p: &Path) -> Result<PathBuf, String> {
+    allowed(&app.state::<AppState>(), p)
+}
+
 fn allowed(state: &AppState, p: &Path) -> Result<PathBuf, String> {
     let canon = p.canonicalize().map_err(|e| e.to_string())?;
     let roots = state.roots.lock().unwrap();
@@ -221,8 +227,8 @@ async fn raw_decode(request: tauri::ipc::Request<'_>) -> Result<Response, String
 /// The loopback channel for big pixel buffers (see pixels.rs): {port, key}, or null without one.
 #[cfg(desktop)]
 #[tauri::command]
-fn pixels_server() -> Option<serde_json::Value> {
-    pixels::start().map(|s| serde_json::json!({ "port": s.port, "key": s.key }))
+fn pixels_server(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    pixels::start(&app).map(|s| serde_json::json!({ "port": s.port, "key": s.key }))
 }
 
 #[tauri::command]
@@ -751,7 +757,7 @@ pub fn run() {
             #[cfg(desktop)]
             queue_open(app.handle(), arg_paths(std::env::args().skip(1)));
             #[cfg(desktop)]
-            pixels::start();
+            pixels::start(app.handle());
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let urls: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();

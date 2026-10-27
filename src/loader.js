@@ -191,6 +191,18 @@ let nativeRaw = !!globalThis.__TAURI_INTERNALS__ && !/Android|iPhone|iPad/.test(
 // faster than Tauri's IPC; IPC remains for when the channel isn't there.
 let pixels;
 const pixelServer = () => (pixels ||= globalThis.__TAURI_INTERNALS__.invoke('pixels_server').catch(() => null));
+// A photo on disk the desktop app may read (in a synced folder, or opened with the app), over the
+// loopback channel: much faster than the read_file command for big files. Null when unavailable.
+export async function readNativeFile(path) {
+  if (!globalThis.__TAURI_INTERNALS__) return null;
+  const server = await pixelServer();
+  if (!server) return null;
+  try {
+    const r = await fetch(`http://127.0.0.1:${server.port}/file?key=${server.key}&${new URLSearchParams({ path })}`);
+    return r.ok ? await r.arrayBuffer() : null;
+  } catch { return null; }
+}
+
 // The native side keeps the last few files it was sent (by this id), so a photo's second develop
 // doesn't send the file again.
 const fileIds = new WeakMap(), sent = new Set();

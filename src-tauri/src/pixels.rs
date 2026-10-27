@@ -7,6 +7,8 @@
 // (through IPC, `pixels_server`). One connection per request, handled on its own thread.
 //
 //   POST /raw?key=…&file=…&quality=3&half=1&preview=1&long=0   body: the RAW file → raw::decode's reply
+//   GET  /file?key=…&path=…   a photo the app may read (in a synced folder, or one it was asked to
+//                             open: the same check as the read_file command) → its bytes
 //
 // `file` names the file (the web app's id for it). The last few files stay here, so a photo's
 // full-size develop, after its half-size one, sends an empty body; 409 asks for the file again.
@@ -40,9 +42,11 @@ pub struct Server {
 }
 
 static SERVER: OnceLock<Option<Server>> = OnceLock::new();
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
 /// Starts the server once; None if the loopback port couldn't be opened (the app then uses IPC).
-pub fn start() -> Option<&'static Server> {
+pub fn start(app: &tauri::AppHandle) -> Option<&'static Server> {
+    let _ = APP.set(app.clone());
     SERVER
         .get_or_init(|| {
             let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
@@ -68,6 +72,31 @@ pub fn start() -> Option<&'static Server> {
 }
 
 const MAX_BODY: usize = 1 << 30;   // 1 GB: the largest RAW files are a few hundred MB
+
+/// Decodes %XX escapes (URLSearchParams encodes spaces as '+').
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let hex = |i: usize| b.get(i).and_then(|&c| (c as char).to_digit(16));
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i], hex(i + 1), hex(i + 2)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (b'+', _, _) => {
+                out.push(b' ');
+                i += 1;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
 
 fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
     stream.set_nodelay(true).ok();
@@ -105,8 +134,27 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
     // Constant-time comparison of the secret.
     let given = param("key").as_bytes();
     let ok_key = given.len() == key.len() && given.iter().zip(key.as_bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0;
-    if method != "POST" || path != "/raw" || !ok_key || !allowed {
+    if !ok_key || !allowed {
         return fail(&mut out, "403 Forbidden", "forbidden");
+    }
+    if method == "GET" && path == "/file" {
+        let wanted = percent_decode(param("path"));
+        let Some(app) = APP.get() else { return fail(&mut out, "503 Service Unavailable", "starting") };
+        let file = match crate::readable_path(app, std::path::Path::new(&wanted)) {
+            Ok(p) => p,
+            Err(e) => return fail(&mut out, "403 Forbidden", &e),
+        };
+        let mut f = match std::fs::File::open(&file) {
+            Ok(f) => f,
+            Err(e) => return fail(&mut out, "404 Not Found", &e.to_string()),
+        };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n")?;
+        std::io::copy(&mut f, &mut out)?;
+        return out.flush();
+    }
+    if method != "POST" || path != "/raw" {
+        return fail(&mut out, "404 Not Found", "not found");
     }
     if length > MAX_BODY {
         return fail(&mut out, "413 Payload Too Large", "too large");
