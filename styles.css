@@ -1110,6 +1110,7 @@ img.empty-mark { display: block; width: 64px; height: 64px; margin: 0 auto 22px;
 @media (min-width: 1100px) {
   :root:not([data-app="mobile"]) body:not(.nav-off) .workspace { grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--panel-w); }
   :root:not([data-app="mobile"]) body:not(.nav-off) .navside { display: flex; }
+  :root:not([data-app="mobile"]) body:not(.nav-off)[data-mode="edit"] .pp-card { left: calc(var(--nav-w) + 16px); }
 }
 :root[data-app="mobile"] #btnNav { display: none; }
 @media (max-width: 1099px) { #btnNav { display: none; } }
@@ -1163,6 +1164,10 @@ img.empty-mark { display: block; width: 64px; height: 64px; margin: 0 auto 22px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); backdrop-filter: blur(10px); opacity: 0; transform: translateY(14px); pointer-events: none;
   transition: opacity 0.35s, transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .pp-card.on { opacity: 1; transform: none; }
+/* In the editor: over the photo's corner, beside the left panel and above the filmstrip, so it neither
+   covers the panel's own portrait nor the strip. */
+body[data-mode="edit"] .pp-card { bottom: calc(var(--film-h, 68px) + 16px); }
+body.film-hidden[data-mode="edit"] .pp-card { --film-h: 28px; }
 .pp-art { width: 128px; height: 158px; display: block; }
 .pp-text { display: grid; gap: 6px; min-width: 132px; padding-bottom: 2px; }
 .pp-label { font: italic 400 19px/1.1 'Instrument Serif', Georgia, serif; color: #f4ead8; max-width: 180px; }
@@ -1237,7 +1242,7 @@ body[data-mode="library"] .ask-btn, body[data-mode="account"] .ask-btn { display
 /* Edit with words in the left panel: a chat at the bottom; results open upward above the field. */
 @media (min-width: 1100px) { :root:not([data-app="mobile"]) body:not(.nav-off) .ask-btn { display: none; } }
 .nav-ask { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); padding: 8px; }
-.cmd.inline { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 8px; padding: 0; animation: none; }
+.cmd.inline { position: static; z-index: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 8px; padding: 0; animation: none; }
 /* The text box: grows with what you write, sends on Enter, and says under the words what it understood. */
 .cmd.inline .cmd-box { width: auto; display: flex; flex-direction: column; border-radius: 11px; background: var(--field); backdrop-filter: none; box-shadow: none; border-color: var(--line); }
 .cmd.inline .cmd-list { order: 0; }

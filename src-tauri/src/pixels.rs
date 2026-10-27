@@ -6,7 +6,11 @@
 // and every request must carry a random secret made at launch, which only the app's own page gets
 // (through IPC, `pixels_server`). One connection per request, handled on its own thread.
 //
-//   POST /raw?key=…&file=…&quality=3&half=1&preview=1&long=0   body: the RAW file → raw::decode's reply
+//   POST /raw?key=…&file=…&quality=3&half=1&preview=1&long=0&upgrade=1   body: the RAW file →
+//                             raw::decode's reply, from the disk cache of developed photos
+//                             (devcache) when it is there. `upgrade`: a stored full-size develop may
+//                             answer a half-size request. Headers say which: X-Half (0 or 1), X-Cached.
+//   POST /preview?key=…&file=…&long=…   body: the RAW file → its camera JPEG, decoded (raw::embedded_preview)
 //   GET  /file?key=…&path=…   a photo the app may read (in a synced folder, or one it was asked to
 //                             open: the same check as the read_file command) → its bytes
 //
@@ -18,19 +22,20 @@ use std::net::{TcpListener, TcpStream};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// The last few RAW files, by the web app's id for them.
-static FILES: Mutex<VecDeque<(String, Arc<Vec<u8>>)>> = Mutex::new(VecDeque::new());
+/// The last few RAW files, by the web app's id for them, with their hash (devcache's key).
+type Kept = (Arc<Vec<u8>>, Arc<String>);
+static FILES: Mutex<VecDeque<(String, Kept)>> = Mutex::new(VecDeque::new());
 const KEEP_FILES: usize = 3;
 
-fn cached(id: &str) -> Option<Arc<Vec<u8>>> {
+fn cached(id: &str) -> Option<Kept> {
     let files = FILES.lock().unwrap();
     files.iter().find(|(k, _)| k == id).map(|(_, b)| b.clone())
 }
 
-fn keep(id: &str, bytes: Arc<Vec<u8>>) {
+fn keep(id: &str, kept: Kept) {
     let mut files = FILES.lock().unwrap();
     files.retain(|(k, _)| k != id);
-    files.push_back((id.to_string(), bytes));
+    files.push_back((id.to_string(), kept));
     while files.len() > KEEP_FILES {
         files.pop_front();
     }
@@ -122,7 +127,11 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
     let mut out = stream;
     // Only the app's own page: tauri://localhost (macOS, Linux) or http(s)://tauri.localhost (Windows).
     let allowed = matches!(origin.as_str(), "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost");
-    let cors = if allowed { format!("Access-Control-Allow-Origin: {origin}\r\nVary: Origin\r\n") } else { String::new() };
+    let cors = if allowed {
+        format!("Access-Control-Allow-Origin: {origin}\r\nAccess-Control-Expose-Headers: X-Half, X-Cached\r\nVary: Origin\r\n")
+    } else {
+        String::new()
+    };
     if method == "OPTIONS" {
         return write!(out, "HTTP/1.1 204 No Content\r\n{cors}Access-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Max-Age: 86400\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     }
@@ -153,14 +162,14 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
         std::io::copy(&mut f, &mut out)?;
         return out.flush();
     }
-    if method != "POST" || path != "/raw" {
+    if method != "POST" || (path != "/raw" && path != "/preview") {
         return fail(&mut out, "404 Not Found", "not found");
     }
     if length > MAX_BODY {
         return fail(&mut out, "413 Payload Too Large", "too large");
     }
     let file = param("file");
-    let body = if length == 0 {
+    let (body, hash) = if length == 0 {
         match cached(file).filter(|_| !file.is_empty()) {
             Some(b) => b,
             None => return fail(&mut out, "409 Conflict", "send the file"),
@@ -168,19 +177,53 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
     } else {
         let mut b = vec![0u8; length];
         reader.read_exact(&mut b)?;
-        let b = Arc::new(b);
+        let hash = Arc::new(crate::devcache::hash(&b));
+        let kept = (Arc::new(b), hash);
         if !file.is_empty() {
-            keep(file, b.clone());
+            keep(file, kept.clone());
         }
-        b
+        kept
     };
     let num = |name: &str| param(name).parse::<i64>().unwrap_or(0);
-    match crate::raw::decode(&body, num("quality") as i32, num("half") != 0, num("preview") != 0, num("long").max(0) as usize) {
+    let long = num("long").max(0) as usize;
+    let ok = |out: &mut TcpStream, len: usize, half: bool, cached: bool| {
+        write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-Half: {}\r\nX-Cached: {}\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n", half as u8, cached as u8)
+    };
+    if path == "/preview" {
+        return match crate::raw::embedded_preview(&body, long) {
+            Ok(reply) => {
+                drop(body);
+                ok(&mut out, reply.len(), false, false)?;
+                out.write_all(&reply)?;
+                out.flush()
+            }
+            Err(e) => fail(&mut out, "422 Unprocessable Entity", &e),
+        };
+    }
+    let (quality, half, preview) = (num("quality") as i32, num("half") != 0, num("preview") != 0);
+    // Developed before: straight from the disk cache, the full-size develop first when it may answer.
+    let app = APP.get();
+    if let Some(app) = app {
+        let tries: &[bool] = if half && num("upgrade") != 0 { &[false, true] } else if half { &[true] } else { &[false] };
+        for &h in tries {
+            if let Some((mut f, len)) = crate::devcache::find(app, &hash, quality, h, long, preview) {
+                drop(body);
+                ok(&mut out, len as usize, h, true)?;
+                std::io::copy(&mut f, &mut out)?;
+                return out.flush();
+            }
+        }
+    }
+    match crate::raw::decode(&body, quality, half, preview, long) {
         Ok(reply) => {
             drop(body);
-            write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len())?;
+            ok(&mut out, reply.len(), half, false)?;
             out.write_all(&reply)?;
-            out.flush()
+            out.flush()?;
+            if let Some(app) = app {
+                crate::devcache::store(app, hash.to_string(), quality, half, long, reply);
+            }
+            Ok(())
         }
         Err(e) => fail(&mut out, "422 Unprocessable Entity", &e),
     }

@@ -1027,15 +1027,17 @@ async function importItems(items, opts = {}) {
     app.images.push(e);
     if (!many || n % 12 === 0) { refreshLibrary(); renderStrip(); }
     try {
-      const d = await decodeFile(file);
+      // RAWs: the camera preview at about the editor's working size (much faster for big cameras).
+      const d = await decodeFile(file, { screen: app.engine?.previewLong || 2560 });
       e.bitmap = d.bitmap;
+      e.reduced = !!d.reduced;
       e.kind = d.kind;
       e.raw = !!d.raw;
       if (d.linear) { e.linear = d.linear; e.meta = d.linear.meta; }
       // JPEGs and other files with EXIF: camera, exposure and when it was taken (RAWs get this from LibRaw).
       else if (!d.raw) e.meta = (await readExif(file)) || null;
-      e.w = d.linear ? d.linear.w : d.bitmap.width;
-      e.h = d.linear ? d.linear.h : d.bitmap.height;
+      e.w = d.linear ? d.linear.w : d.fullW || d.bitmap.width;
+      e.h = d.linear ? d.linear.h : d.fullH || d.bitmap.height;
       e.loading = false;
       const edited = applyImported(e, await importedSettings(it, file, e.w / e.h).catch(() => null));
       if (toEditor && !first && !openedEarly) { openedEarly = e; openInEditor(e.id).catch((err) => console.warn(err)); }
@@ -1471,6 +1473,11 @@ function autoPreviewLong(engine) {
   const mp = (long) => (long * long / 1.5) / 1e6;
   const pick = PREVIEW_SIZES.find((l) => msPerMP * mp(l) <= 90 && msPerMP * mp(l / 2) <= 25) || PREVIEW_SIZES.at(-1);
   console.info(`Graphics: ${gpu}, ${msPerMP.toFixed(1)} ms per megapixel: working size ${pick} px`);
+  // Drawing on the CPU (no graphics driver for the browser or the system's web view): everything is
+  // many times slower, so say so once.
+  if (/llvmpipe|softpipe|swiftshader|basic render|software/i.test(gpu)) {
+    setTimeout(() => app.toast(`Graphics acceleration isn’t available here (${gpu}), so editing is slow. Updating the graphics driver usually turns it on.`, { ms: 10000 }), 2500);
+  }
   return pick;
 }
 
@@ -1599,19 +1606,14 @@ const FULL_AFTER = 1500, EDIT_QUIET = 2000;
 
 // Draft frames: while a slider moves, the photo renders at a lower resolution (sharp again the moment
 // it is let go), as Lightroom and Capture One do, but only on computers where full-resolution frames
-// can't keep up. The measure is the median time between frames during drags (a pause of over a second
-// isn't a frame, and the median shrugs off shorter pauses): drafts turn on above DRAFT_SLOW ms (under
-// 30 frames a second) and stay on for later drags, and turn off again after a drag in draft that ran
-// near the display's own rate.
-const DRAFT_SLOW = 33, DRAFT_FAST = 20;
+// can't keep up: once the median time between frames in a drag goes over DRAFT_SLOW ms (fewer than
+// about 45 frames a second; a pause of over a second isn't a frame), drafts stay on for the rest of
+// the session, so drags don't flip between sharp-but-slow and smooth.
+const DRAFT_SLOW = 22;
 const draft = { on: false, gaps: [] };
 const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
 function draftFactor(sliding, dpr, interval) {
-  if (!sliding) {
-    if (draft.gaps.length >= 8 && draft.on && median(draft.gaps) < DRAFT_FAST) { draft.on = false; perf.mark('draft-off', { median: Math.round(median(draft.gaps)) }); }
-    draft.gaps = [];
-    return 0;
-  }
+  if (!sliding) { draft.gaps = []; return 0; }
   if (interval > 0 && interval < 1000) {
     draft.gaps.push(interval);
     if (draft.gaps.length > 8) draft.gaps.shift();
@@ -1644,9 +1646,11 @@ function developRaw(e, { now = false } = {}) {
     .then((f) => decodeRawLinear(f, { quality: prefs.rawQuality, half: half ? 1 : 0, preview: half || !e.linear?.preview }))
     .then(async (lin) => {
       if (half) e.rawBusy = false; else e.fullBusy = false;
-      perf.mark(half ? 'develop-half' : 'develop-full', { ms: lin.meta?.decodeMs, native: !!lin.meta?.native, w: lin.w, h: lin.h, ...lin.meta?.timing });
+      // Developed before: a half-size request may have brought the stored full-size develop.
+      const small = half && lin.half;
+      perf.mark(small ? 'develop-half' : 'develop-full', { ms: lin.meta?.decodeMs, native: !!lin.meta?.native, w: lin.w, h: lin.h, ...lin.meta?.timing });
       e.meta = lin.meta;
-      if (!half) catalog.updatePhoto(e.id, { meta: lin.meta, w: lin.w, h: lin.h });
+      if (!small) catalog.updatePhoto(e.id, { meta: lin.meta, w: lin.w, h: lin.h });
       if (app.images[app.cur] !== e) { done(); return; }
       // A full develop that finished first (the photo was reopened meanwhile) wins over a half one.
       if (half && e.linear && !e.linear.half) return;
@@ -1658,10 +1662,11 @@ function developRaw(e, { now = false } = {}) {
       app.requestRender();
       if (half) {
         saveThumb();
-        app.toast(`RAW developed with LibRaw in ${(lin.meta.decodeMs / 1000).toFixed(1)} s`);
+        if (!lin.meta.timing?.cached) app.toast(`RAW developed with LibRaw in ${(lin.meta.decodeMs / 1000).toFixed(1)} s`);
         prefetchNeighbours();
-        developRaw(e, { now: !!e.fullReady });
-      } else done();
+      }
+      if (small) developRaw(e, { now: !!e.fullReady });
+      else done();
     })
     .catch((err) => {
       if (half) e.rawBusy = false; else e.fullBusy = false;
@@ -1672,6 +1677,15 @@ function developRaw(e, { now = false } = {}) {
       if (app.images[app.cur] === e) {
         $('rawBadge').hidden = true;
         app.toast(`Using the camera preview — ${err.message}`);
+        // The first look was a reduced camera preview: edit the full-size one instead.
+        if (e.reduced && e.file) decodeFile(e.file).then(async (d) => {
+          if (app.images[app.cur] !== e || !d.bitmap) return;
+          e.bitmap?.close?.();
+          e.bitmap = d.bitmap;
+          e.reduced = false;
+          await applySource(e);
+          app.requestRender();
+        }).catch(() => {});
       }
     });
 }
@@ -1748,10 +1762,11 @@ async function select(i) {
       }
       // Read once into memory: the RAW develops that follow then don't read storage again.
       e.file = await readable(e.file);
-      const d = await decodeFile(e.file);
+      const d = await decodeFile(e.file, { screen: app.engine?.previewLong || 2560 });
       // Opened something else meanwhile: this photo was released while it decoded; drop the result.
       if (app.images[app.cur] !== e) { d.bitmap?.close?.(); return; }
       e.bitmap = d.bitmap;
+      e.reduced = !!d.reduced;
       e.kind = d.kind;
       e.raw = !!d.raw;
       if (d.linear) { e.linear = d.linear; e.meta = d.linear.meta; }

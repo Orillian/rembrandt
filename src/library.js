@@ -215,6 +215,13 @@ export function buildLibrary(app, api) {
   const setZoom = (d) => { prefs.size = clamp(prefs.size + d, MIN_SIZE, MAX_SIZE); zoom.value = prefs.size; savePrefs(); refresh(); };
 
   function renderHeader(total) {
+    // Rebuilding the header detaches the search box: keep typing in it (focus and caret) if it had focus.
+    const typing = document.activeElement === search ? [search.selectionStart, search.selectionEnd] : null;
+    queueMicrotask(() => {
+      if (!typing || !search.isConnected || document.activeElement === search) return;
+      search.focus({ preventScroll: true });
+      try { search.setSelectionRange(...typing); } catch { /* type=search may not support it */ }
+    });
     header.textContent = '';
     const n = selected.size;
     header.classList.toggle('selecting', n > 0);

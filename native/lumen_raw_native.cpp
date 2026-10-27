@@ -215,6 +215,27 @@ int lrn_decode(const unsigned char *buf, size_t size, int quality, int half, int
   return 0;
 }
 
+// The camera's embedded JPEG preview (the largest LibRaw finds), without developing the RAW: copied
+// into *out (free it with lrn_free_bytes), with LibRaw's orientation (0, 3, 5 or 6) in *flip.
+// Returns 0, a LibRaw error code, or -3 when the preview isn't a JPEG.
+int lrn_thumb(const unsigned char *buf, size_t size, unsigned char **out, size_t *len, int *flip) {
+  *out = nullptr;
+  *len = 0;
+  LibRaw raw;
+  int r = raw.open_buffer(buf, size);
+  if (r == LIBRAW_SUCCESS) r = raw.unpack_thumb();
+  if (r != LIBRAW_SUCCESS) return r;
+  const libraw_thumbnail_t &t = raw.imgdata.thumbnail;
+  if (t.tformat != LIBRAW_THUMBNAIL_JPEG || !t.thumb || t.tlength < 4) return -3;
+  *out = (unsigned char *)malloc(t.tlength);
+  if (!*out) return -1;
+  memcpy(*out, t.thumb, t.tlength);
+  *len = t.tlength;
+  *flip = raw.imgdata.sizes.flip;
+  return 0;
+}
+void lrn_free_bytes(unsigned char *p) { free(p); }
+
 int lrn_width(const LrnImage *h) { return h->img->width; }
 int lrn_height(const LrnImage *h) { return h->img->height; }
 const unsigned short *lrn_data(const LrnImage *h) { return (const unsigned short *)h->img->data; }

@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.3.26"
+version = "0.3.27"
 description = "Rembrandt photo editor"
 authors = ["Rembrandt contributors"]
 license = "GPL-3.0-or-later"
@@ -25,10 +25,15 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.3"
+jpeg-decoder = "0.3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sha2 = "0.11"
+
+# The system web view on Linux: its graphics acceleration is set explicitly (see lib.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
 
 [profile.release]
 codegen-units = 1

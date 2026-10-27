@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(desktop)]
+mod devcache;
+#[cfg(desktop)]
 mod pixels;
 #[cfg(desktop)]
 mod raw;
@@ -758,6 +760,20 @@ pub fn run() {
             queue_open(app.handle(), arg_paths(std::env::args().skip(1)));
             #[cfg(desktop)]
             pixels::start(app.handle());
+            // Linux: WebKitGTK may leave the GPU off (its policy depends on the version and the
+            // distribution); the editor draws everything with WebGL, so always use it. Windows
+            // (WebView2) gets the fast GPU of a two-GPU laptop and GPU rasterization through
+            // tauri.conf.json's additionalBrowserArgs; macOS's WebKit always uses the GPU.
+            #[cfg(target_os = "linux")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.with_webview(|wv| {
+                    use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+                    if let Some(s) = wv.inner().settings() {
+                        s.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Always);
+                        s.set_enable_webgl(true);
+                    }
+                });
+            }
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let urls: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();

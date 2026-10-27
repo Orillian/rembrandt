@@ -18,6 +18,8 @@ extern "C" {
     fn lrn_data(h: *const LrnImage) -> *const u16;
     fn lrn_meta(h: *const LrnImage) -> *const c_char;
     fn lrn_error(code: c_int) -> *const c_char;
+    fn lrn_thumb(buf: *const c_uchar, size: usize, out: *mut *mut c_uchar, len: *mut usize, flip: *mut c_int) -> c_int;
+    fn lrn_free_bytes(p: *mut c_uchar);
 }
 
 /// A developed RAW, freed when dropped.
@@ -322,4 +324,71 @@ pub fn decode(bytes: &[u8], quality: i32, half: bool, want_preview: bool, long: 
         out[24 + at..24 + at + 7].copy_from_slice(t_convert.as_bytes());
     }
     Ok(out)
+}
+
+/// The camera's embedded JPEG preview, decoded straight to a reduced size: the JPEG decoder's DCT
+/// scaling (1/2, 1/4, 1/8) picks the smallest size whose long edge is still at least `long`, so a
+/// 36 MP preview shown on screen decodes a quarter of the pixels or fewer. The reply: "LRP1", width,
+/// height, EXIF orientation (1, 3, 6 or 8), the full-size preview's width and height (u32 little-endian
+/// each), then RGBA, 8-bit.
+pub fn embedded_preview(bytes: &[u8], long: usize) -> Result<Vec<u8>, String> {
+    let (mut p, mut len, mut flip): (*mut c_uchar, usize, c_int) = (std::ptr::null_mut(), 0, 0);
+    let r = unsafe { lrn_thumb(bytes.as_ptr(), bytes.len(), &mut p, &mut len, &mut flip) };
+    if r != 0 || p.is_null() {
+        return Err(if r == -3 { "no JPEG preview".into() } else { unsafe { CStr::from_ptr(lrn_error(r)) }.to_string_lossy().into_owned() });
+    }
+    let jpeg = unsafe { std::slice::from_raw_parts(p, len) }.to_vec();
+    unsafe { lrn_free_bytes(p) };
+    let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
+    dec.read_info().map_err(|e| e.to_string())?;
+    let info = dec.info().ok_or("unreadable preview")?;
+    let (w0, h0) = (info.width as usize, info.height as usize);
+    // Scale so the long edge stays at least `long` (the decoder rounds up to its next DCT size).
+    let k = if long > 0 && w0.max(h0) > long { long as f64 / w0.max(h0) as f64 } else { 1.0 };
+    let (w, h) = dec.scale(((w0 as f64 * k).ceil() as u16).max(1), ((h0 as f64 * k).ceil() as u16).max(1)).map_err(|e| e.to_string())?;
+    let px = dec.decode().map_err(|e| e.to_string())?;
+    let info = dec.info().ok_or("unreadable preview")?;
+    let (w, h) = (w as usize, h as usize);
+    let orientation: u32 = match flip { 3 => 3, 5 => 8, 6 => 6, _ => 1 };
+    let mut out = vec![0u8; 24 + w * h * 4];
+    out[0..4].copy_from_slice(b"LRP1");
+    for (i, v) in [w as u32, h as u32, orientation, w0 as u32, h0 as u32].iter().enumerate() {
+        out[4 + i * 4..8 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    let rgba = &mut out[24..];
+    use jpeg_decoder::PixelFormat as F;
+    match info.pixel_format {
+        F::RGB24 => for (d, s) in rgba.chunks_exact_mut(4).zip(px.chunks_exact(3)) { d[..3].copy_from_slice(s); d[3] = 255; },
+        F::L8 => for (d, &v) in rgba.chunks_exact_mut(4).zip(px.iter()) { d.copy_from_slice(&[v, v, v, 255]); },
+        F::L16 => for (d, s) in rgba.chunks_exact_mut(4).zip(px.chunks_exact(2)) { let v = s[0]; d.copy_from_slice(&[v, v, v, 255]); },
+        F::CMYK32 => for (d, s) in rgba.chunks_exact_mut(4).zip(px.chunks_exact(4)) {
+            let k = 255 - s[3] as u32;
+            for c in 0..3 { d[c] = ((255 - s[c] as u32) * k / 255) as u8; }
+            d[3] = 255;
+        },
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    // RAW files to try, from REMBRANDT_TEST_RAWS (paths separated by ':').
+    #[test]
+    fn embedded_preview_decodes_reduced() {
+        let Ok(list) = std::env::var("REMBRANDT_TEST_RAWS") else { return };
+        for path in list.split(':') {
+            let bytes = std::fs::read(path).unwrap();
+            let t = std::time::Instant::now();
+            let r = super::embedded_preview(&bytes, 2560);
+            match r {
+                Ok(out) => {
+                    let w = u32::from_le_bytes(out[4..8].try_into().unwrap());
+                    let h = u32::from_le_bytes(out[8..12].try_into().unwrap());
+                    println!("{path}: {w}x{h} in {} ms", t.elapsed().as_millis());
+                    assert!(w.max(h) >= 2560);
+                }
+                Err(e) => panic!("{path}: {e}"),
+            }
+        }
+    }
 }

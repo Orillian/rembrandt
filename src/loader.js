@@ -12,8 +12,9 @@ export const ACCEPT = 'image/*,' + [...RAW_EXT].map((e) => '.' + e).join(',');
 
 const ext = (name) => (name.split('.').pop() || '').toLowerCase();
 
-export async function decodeFile(file) {
-  if (RAW_EXT.has(ext(file.name))) return decodeRaw(file);
+// `screen`: the size the editor shows the photo at, for a faster first look at RAWs (desktop app).
+export async function decodeFile(file, { screen = 0 } = {}) {
+  if (RAW_EXT.has(ext(file.name))) return decodeRaw(file, { screen });
   try {
     const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image', premultiplyAlpha: 'none' });
     return { bitmap, kind: file.type.replace('image/', '').toUpperCase() || ext(file.name).toUpperCase() };
@@ -110,7 +111,13 @@ async function orient(bitmap, o) {
   return createImageBitmap(c);
 }
 
-async function decodeRaw(file) {
+async function decodeRaw(file, { screen = 0 } = {}) {
+  // For the editor's first look (`screen`: its working size): the camera preview decoded natively at
+  // about that size, a fraction of the work of the full-size JPEG. The RAW develop replaces it soon.
+  if (screen) {
+    const r = await nativePreview(file, screen).catch(() => null);
+    if (r) return { bitmap: r.bitmap, fullW: r.fullW, fullH: r.fullH, kind: ext(file.name).toUpperCase(), raw: true, rawPreview: true, reduced: true };
+  }
   const embedded = await decodeEmbedded(file).catch(() => null);
   if (embedded) return embedded;
   // No usable embedded preview: decode the RAW data itself right away.
@@ -207,31 +214,53 @@ export async function readNativeFile(path) {
 // doesn't send the file again.
 const fileIds = new WeakMap(), sent = new Set();
 const fileId = (file) => { if (!fileIds.has(file)) fileIds.set(file, crypto.randomUUID()); return fileIds.get(file); };
+// POSTs a file to the loopback channel (`path`: /raw or /preview), sending its bytes only when the
+// native side doesn't have them yet. The reply ({ buf, headers }), or null when the channel isn't
+// reachable here (it is then not tried again).
+async function nativePost(file, buffer, path, q) {
+  const server = await pixelServer();
+  if (!server) return null;
+  const id = fileId(file);
+  // text/plain keeps it a simple request (no CORS preflight); the body is the file's bytes.
+  const post = (body) => fetch(`http://127.0.0.1:${server.port}${path}?key=${server.key}&file=${id}&${new URLSearchParams(q)}`,
+    { method: 'POST', headers: { 'content-type': 'text/plain' }, body });
+  let r;
+  try {
+    r = await post(sent.has(id) ? new ArrayBuffer(0) : await buffer());
+    if (r.status === 409) r = await post(await buffer());
+  } catch {
+    pixels = Promise.resolve(null);
+    return null;
+  }
+  if (!r.ok) throw new Error((await r.text()) || `native decoder answered ${r.status}`);
+  sent.add(id);
+  return { buf: await r.arrayBuffer(), headers: r.headers };
+}
+
+// The camera's JPEG inside a RAW, decoded natively at a reduced size (long edge at least `long`):
+// { bitmap, fullW, fullH } (the full-size preview's oriented size), or null where there's no native
+// side or no JPEG preview.
+async function nativePreview(file, long) {
+  if (!nativeRaw) return null;
+  const buf = (await nativePost(file, async () => readBytes(file)?.slice(0) || file.arrayBuffer(), '/preview', { long }).catch(() => null))?.buf;
+  if (!buf) return null;
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x3150524c) return null;   // "LRP1"
+  const [w, h, o, fw, fh] = [4, 8, 12, 16, 20].map((at) => dv.getUint32(at, true));
+  const bitmap = await orient(await createImageBitmap(new ImageData(new Uint8ClampedArray(buf, 24, w * h * 4), w, h)), o);
+  const swap = o === 6 || o === 8;
+  return { bitmap, fullW: swap ? fh : fw, fullH: swap ? fw : fh };
+}
+
+// Photos developed before come from the native side's disk cache (src-tauri/src/devcache.rs), and
+// a half-size request may get the stored full-size develop instead (`half` in the result says which).
 async function decodeNative(file, buffer, { quality, half, preview, long }) {
   const t0 = performance.now();
-  const q = { quality, half: half ? 1 : 0, preview: preview ? 1 : 0, long: long || 0 };
-  const server = await pixelServer();
-  let buf;
-  if (server) {
-    const id = fileId(file);
-    const post = async (body) => {
-      // text/plain keeps it a simple request (no CORS preflight); the body is the file's bytes.
-      const url = `http://127.0.0.1:${server.port}/raw?key=${server.key}&file=${id}&${new URLSearchParams(q)}`;
-      return fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain' }, body });
-    };
-    let r;
-    try {
-      r = await post(sent.has(id) ? new ArrayBuffer(0) : await buffer());
-      if (r.status === 409) r = await post(await buffer());
-    } catch (e) {
-      // The loopback channel isn't reachable here: use IPC from now on.
-      pixels = Promise.resolve(null);
-      return decodeNative(file, buffer, { quality, half, preview, long });
-    }
-    if (!r.ok) throw new Error((await r.text()) || `native decoder answered ${r.status}`);
-    sent.add(id);
-    buf = await r.arrayBuffer();
-  } else {
+  const q = { quality, half: half ? 1 : 0, preview: preview ? 1 : 0, long: long || 0, upgrade: half ? 1 : 0 };
+  const reply = await nativePost(file, buffer, '/raw', q);
+  let buf = reply?.buf, cached = false;
+  if (reply) { half = reply.headers.get('x-half') !== '0' && !!half; cached = reply.headers.get('x-cached') === '1'; }
+  else {
     const reply = await globalThis.__TAURI_INTERNALS__.invoke('raw_decode', new Uint8Array(await buffer()), {
       headers: { 'x-quality': String(quality), 'x-half': String(q.half), 'x-preview': String(q.preview), 'x-long': String(q.long) },
     });
@@ -248,8 +277,9 @@ async function decodeNative(file, buffer, { quality, half, preview, long }) {
   if (!(meta.baselineExposure > -20 && meta.baselineExposure < 20)) meta.baselineExposure = 0;
   meta.decodeMs = Math.round(performance.now() - t0);
   meta.native = true;
-  if (meta.timing) meta.timing.transfer = meta.decodeMs - meta.timing.libraw - meta.timing.preview - meta.timing.convert;
-  return { ok: true, w, h, meta, gain: 2 ** (RAW_EV + meta.baselineExposure), data: new Uint16Array(buf, at, w * h * 4), preview: pv };
+  if (cached) meta.timing = { cached: true };
+  else if (meta.timing) meta.timing.transfer = meta.decodeMs - meta.timing.libraw - meta.timing.preview - meta.timing.convert;
+  return { ok: true, half: !!half, w, h, meta, gain: 2 ** (RAW_EV + meta.baselineExposure), data: new Uint16Array(buf, at, w * h * 4), preview: pv };
 }
 
 // Demosaic of a camera RAW with LibRaw. Resolves {w, h, data (RGBA half floats), gain, meta, preview,
@@ -261,9 +291,7 @@ export function decodeRawLinear(file, { quality = 3, half = 0, background = fals
     const read = () => readBytes(file)?.slice(0) || file.arrayBuffer();
     if (nativeRaw) {
       try {
-        const r = await decodeNative(file, read, { quality, half, preview, long });
-        r.half = !!half;
-        return r;
+        return await decodeNative(file, read, { quality, half, preview, long });
       } catch (e) {
         // Fall back to WebAssembly (the same result, slower). A file LibRaw rejects only falls back on
         // its own; anything else means the native path is broken here, so it stays off.
