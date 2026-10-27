@@ -212,9 +212,10 @@ If Rembrandt disappeared tomorrow, your library and your edits would still be yo
 
 ## How it's built
 
-JavaScript with WebGL2 and WebGPU shaders for the editing engine and on-device AI, in a small Rust
-([Tauri](https://tauri.app)) desktop app. RAW files are decoded by [LibRaw](https://www.libraw.org)
-(C++, compiled to WebAssembly). Every release is built by GitHub Actions from this repository, with
+JavaScript with WebGL2 and WebGPU shaders for the editing engine and on-device AI, in a Rust
+([Tauri](https://tauri.app)) desktop app. RAW files are decoded by [LibRaw](https://www.libraw.org):
+in the desktop apps natively (C++ built for Apple Silicon, x86-64 and ARM), with the conversion for the
+GPU spread over every core; in browsers as WebAssembly. Both give the same pixels. Every release is built by GitHub Actions from this repository, with
 checksums and signed build provenance ([SECURITY.md](SECURITY.md)).
 
 ## Credits

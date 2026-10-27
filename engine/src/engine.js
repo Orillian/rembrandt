@@ -638,6 +638,53 @@ export class Engine {
     return px;
   }
 
+  // readPixels (8-bit) without making the CPU wait for the GPU: the pixels come back through a pixel
+  // buffer and a fence, polled once a frame, so slider frames keep flowing while the histogram updates.
+  // One at a time; resolves null if another started meanwhile or the browser lacks fences.
+  readPixelsAsync(p, w, h, v) {
+    const gl = this.gl;
+    if (!gl.fenceSync) return Promise.resolve(this.readPixels(p, w, h, v));
+    const out = this.process(p, null);
+    const lod = out.mip ? Math.max(0, Math.log2(this.L.h / v.scale)) : 0;
+    let t = this.smallAsync;
+    if (!t || t.w !== w || t.h !== h) {
+      if (t) this.free(t);
+      t = this.smallAsync = this.target(w, h, { fmt: gl.RGBA8 });
+    }
+    this.draw(this.P.final, this.finalUniforms(p, out, { ...v, lod, clip: false, overlayId: null }), t);
+    const bytes = w * h * 4;
+    if (!this.pbo || this.pboSize < bytes) {
+      if (this.pbo) gl.deleteBuffer(this.pbo);
+      this.pbo = gl.createBuffer();
+      this.pboSize = bytes;
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, bytes, gl.STREAM_READ);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    const ticket = (this.readTicket = (this.readTicket || 0) + 1);
+    return new Promise((resolve) => {
+      const poll = () => {
+        if (ticket !== this.readTicket) { gl.deleteSync(sync); resolve(null); return; }
+        const st = gl.clientWaitSync(sync, 0, 0);
+        if (st === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 4); return; }
+        gl.deleteSync(sync);
+        if (st === gl.WAIT_FAILED) { resolve(null); return; }
+        const px = new Uint8Array(bytes);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        resolve(px);
+      };
+      setTimeout(poll, 4);
+    });
+  }
+
   // Export render. `cropH` is the crop height in image-height units, `outH` the wanted pixel height.
   // Small outputs render from the mip-mapped preview level; larger ones from the full-resolution level
   // at native crop size (the caller downsizes if needed). Returns {pixels, w, h}.

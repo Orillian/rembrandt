@@ -4,6 +4,11 @@
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 
 use std::path::{Path, PathBuf};
+
+#[cfg(desktop)]
+mod pixels;
+#[cfg(desktop)]
+mod raw;
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
@@ -195,6 +200,29 @@ fn queue_open(app: &tauri::AppHandle, paths: impl IntoIterator<Item = PathBuf>) 
 #[cfg(desktop)]
 fn arg_paths(argv: impl IntoIterator<Item = String>) -> Vec<PathBuf> {
     argv.into_iter().filter(|a| !a.starts_with('-') && !a.contains("://")).map(PathBuf::from).collect()
+}
+
+/// Develops a RAW file in native code (see raw.rs). The body is the file; headers carry the options:
+/// x-quality (LibRaw demosaic), x-half (1 = half size), x-preview (1 = also a small preview), x-long
+/// (box-average to about this long edge, 0 = full). Replies with raw::decode's layout.
+#[cfg(desktop)]
+#[tauri::command]
+async fn raw_decode(request: tauri::ipc::Request<'_>) -> Result<Response, String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else { return Err("Expected the file's bytes".into()) };
+    let num = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let (quality, half, preview, long) = (num("x-quality") as i32, num("x-half") != 0, num("x-preview") != 0, num("x-long").max(0) as usize);
+    let bytes = body.clone();
+    tauri::async_runtime::spawn_blocking(move || raw::decode(&bytes, quality, half, preview, long))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(Response::new)
+}
+
+/// The loopback channel for big pixel buffers (see pixels.rs): {port, key}, or null without one.
+#[cfg(desktop)]
+#[tauri::command]
+fn pixels_server() -> Option<serde_json::Value> {
+    pixels::start().map(|s| serde_json::json!({ "port": s.port, "key": s.key }))
 }
 
 #[tauri::command]
@@ -722,6 +750,8 @@ pub fn run() {
             }
             #[cfg(desktop)]
             queue_open(app.handle(), arg_paths(std::env::args().skip(1)));
+            #[cfg(desktop)]
+            pixels::start();
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let urls: Vec<String> = event.urls().iter().map(|u| u.to_string()).collect();
@@ -731,7 +761,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, take_auth_code, pick_folder, restore_folders, forget_folder, list_photos, read_file, read_text, write_sidecar,
-            write_export, stage_export, open_in_photos, update_check, update_install, update_progress, take_opened, open_paths
+            write_export, stage_export, open_in_photos, update_check, update_install, update_progress, take_opened, open_paths,
+            #[cfg(desktop)]
+            raw_decode,
+            #[cfg(desktop)]
+            pixels_server
         ])
         .build(tauri::generate_context!())
         .expect("error while running the app")

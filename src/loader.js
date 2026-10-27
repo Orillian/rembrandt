@@ -1,6 +1,8 @@
 // Decodes image files. Standard formats use the browser decoder; camera RAW files open through the
 // full-size JPEG the camera embeds in every RAW (with the RAW's orientation applied).
 
+import { RAW_EV } from '../engine/src/color.js';
+
 export const RAW_EXT = new Set([
   'dng', 'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'raf', 'orf', 'rw2', 'rwl',
   'pef', 'srw', 'x3f', '3fr', 'iiq', 'erf', 'kdc', 'mos', 'mrw', 'dcr', 'mef', 'raw',
@@ -182,13 +184,82 @@ function lane(name) {
   return (lanes[name] = L);
 }
 
+// The desktop app develops RAWs in native code on every core (src-tauri/src/raw.rs): several times
+// faster than WebAssembly, with the same result. Browsers use the WebAssembly worker below.
+let nativeRaw = !!globalThis.__TAURI_INTERNALS__ && !/Android|iPhone|iPad/.test(globalThis.navigator?.userAgent || '');
+// Big buffers travel over the app's private loopback channel (src-tauri/src/pixels.rs), many times
+// faster than Tauri's IPC; IPC remains for when the channel isn't there.
+let pixels;
+const pixelServer = () => (pixels ||= globalThis.__TAURI_INTERNALS__.invoke('pixels_server').catch(() => null));
+// The native side keeps the last few files it was sent (by this id), so a photo's second develop
+// doesn't send the file again.
+const fileIds = new WeakMap(), sent = new Set();
+const fileId = (file) => { if (!fileIds.has(file)) fileIds.set(file, crypto.randomUUID()); return fileIds.get(file); };
+async function decodeNative(file, buffer, { quality, half, preview, long }) {
+  const t0 = performance.now();
+  const q = { quality, half: half ? 1 : 0, preview: preview ? 1 : 0, long: long || 0 };
+  const server = await pixelServer();
+  let buf;
+  if (server) {
+    const id = fileId(file);
+    const post = async (body) => {
+      // text/plain keeps it a simple request (no CORS preflight); the body is the file's bytes.
+      const url = `http://127.0.0.1:${server.port}/raw?key=${server.key}&file=${id}&${new URLSearchParams(q)}`;
+      return fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain' }, body });
+    };
+    let r;
+    try {
+      r = await post(sent.has(id) ? new ArrayBuffer(0) : await buffer());
+      if (r.status === 409) r = await post(await buffer());
+    } catch (e) {
+      // The loopback channel isn't reachable here: use IPC from now on.
+      pixels = Promise.resolve(null);
+      return decodeNative(file, buffer, { quality, half, preview, long });
+    }
+    if (!r.ok) throw new Error((await r.text()) || `native decoder answered ${r.status}`);
+    sent.add(id);
+    buf = await r.arrayBuffer();
+  } else {
+    const reply = await globalThis.__TAURI_INTERNALS__.invoke('raw_decode', new Uint8Array(await buffer()), {
+      headers: { 'x-quality': String(quality), 'x-half': String(q.half), 'x-preview': String(q.preview), 'x-long': String(q.long) },
+    });
+    buf = reply instanceof ArrayBuffer ? reply : new Uint8Array(reply).buffer;
+  }
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x314e524c) throw new Error('unexpected reply from the native decoder');   // "LRN1"
+  const [w, h, pw, ph, ml] = [4, 8, 12, 16, 20].map((o) => dv.getUint32(o, true));
+  const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 24, ml)));
+  let at = 24 + ml + ((4 - (ml % 4)) % 4);
+  // Its own copy: the preview outlives this develop (a full-size one reuses the half-size preview).
+  const pv = pw ? { data: new Uint8ClampedArray(buf, at, pw * ph * 4).slice(), w: pw, h: ph } : null;
+  at += pw * ph * 4;
+  if (!(meta.baselineExposure > -20 && meta.baselineExposure < 20)) meta.baselineExposure = 0;
+  meta.decodeMs = Math.round(performance.now() - t0);
+  meta.native = true;
+  if (meta.timing) meta.timing.transfer = meta.decodeMs - meta.timing.libraw - meta.timing.preview - meta.timing.convert;
+  return { ok: true, w, h, meta, gain: 2 ** (RAW_EV + meta.baselineExposure), data: new Uint16Array(buf, at, w * h * 4), preview: pv };
+}
+
 // Demosaic of a camera RAW with LibRaw. Resolves {w, h, data (RGBA half floats), gain, meta, preview,
 // half}. `half: 1` decodes at half size without demosaicing (each 2 × 2 sensor block is one pixel):
 // about five times faster, and still larger than the editor's on-screen working size.
 export function decodeRawLinear(file, { quality = 3, half = 0, background = false, preview = true, long = 0 } = {}) {
   const L = lane(background ? 'background' : half ? 'quick' : 'full');
   const run = async () => {
-    const buffer = readBytes(file)?.slice(0) || await file.arrayBuffer();
+    const read = () => readBytes(file)?.slice(0) || file.arrayBuffer();
+    if (nativeRaw) {
+      try {
+        const r = await decodeNative(file, read, { quality, half, preview, long });
+        r.half = !!half;
+        return r;
+      } catch (e) {
+        // Fall back to WebAssembly (the same result, slower). A file LibRaw rejects only falls back on
+        // its own; anything else means the native path is broken here, so it stays off.
+        console.warn('native RAW decode', e);
+        if (!/data|format|corrupt|unsupported|unknown/i.test(String(e))) nativeRaw = false;
+      }
+    }
+    const buffer = await read();
     const w = L.get();
     const id = ++seq;
     const r = await new Promise((resolve, reject) => {

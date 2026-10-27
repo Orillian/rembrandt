@@ -81,6 +81,7 @@ import { estimateAirlight } from '../engine/src/pipeline.js';
 import { shown, aiOn, onWorkspaceChange } from './workspace.js';
 import { hdrFromOne, HDR_ONE } from './hdr-one.js';
 import { openFeedback, track, askAboutUsage, apiAvailable } from './feedback.js';
+import * as perf from './perf.js';
 
 const $ = (id) => document.getElementById(id);
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
@@ -544,6 +545,7 @@ const app = {
   renderNow() {
     const E = this.engine;
     if (!this.img || !E?.L || this._borrowed) return;
+    const tFrame = performance.now();
     const d = DPR();
     const cw = Math.max(1, Math.round(viewer.clientWidth * d)), ch = Math.max(1, Math.round(viewer.clientHeight * d));
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
@@ -582,6 +584,7 @@ const app = {
     this.updateHud();
     this.scheduleHisto();
     navSide?.update();
+    perf.frame(performance.now() - tFrame, !!t.sliding);
   },
 
   drawOverlay() {
@@ -621,9 +624,12 @@ const app = {
 
   // One small render per edit feeds the histogram and the navigator (same size, so the engine reuses
   // its readback target).
-  scheduleHisto: debounce(function histo() {
+  scheduleHisto: debounce(async function histo() {
     if (!app.img || !app.engine.L) return;
-    app.small = app.renderSmall(app.renderParams(), SMALL);
+    // Read back without stalling the GPU; a newer edit meanwhile makes this one give way to it.
+    const small = await app.renderSmallAsync(app.renderParams(), SMALL);
+    if (!small || !app.img) return;
+    app.small = small;
     app.hist = computeHistogram(app.small.data);
     navSide?.setThumb(app.small);
     sideChat?.refresh();
@@ -632,6 +638,15 @@ const app = {
     $('clipLo').classList.toggle('hot', app.hist.clipLo);
     if (app.state.tool === 'edit' && app.panel && !app.state.sliding) app.panel.refreshCurve?.();
   }, 90),
+
+  async renderSmallAsync(params, long) {
+    if (!this.img || !this.engine.L) return null;
+    const { crop } = params.geometry;
+    const ar = crop.w / crop.h;
+    const w = Math.max(1, Math.round(ar >= 1 ? long : long * ar)), h = Math.max(1, Math.round(ar >= 1 ? long / ar : long));
+    const px = await this.engine.readPixelsAsync(params, w, h, { ...this.outputMats(params, w, h), scale: h / crop.h, cropTest: true });
+    return px && new ImageData(new Uint8ClampedArray(px.buffer), w, h);
+  },
 
   renderSmall(params, long) {
     if (!this.img || !this.engine.L) return null;
@@ -1589,6 +1604,7 @@ function developRaw(e, { now = false } = {}) {
     .then((f) => decodeRawLinear(f, { quality: prefs.rawQuality, half: half ? 1 : 0, preview: half || !e.linear?.preview }))
     .then(async (lin) => {
       if (half) e.rawBusy = false; else e.fullBusy = false;
+      perf.mark(half ? 'develop-half' : 'develop-full', { ms: lin.meta?.decodeMs, native: !!lin.meta?.native, w: lin.w, h: lin.h, ...lin.meta?.timing });
       e.meta = lin.meta;
       if (!half) catalog.updatePhoto(e.id, { meta: lin.meta, w: lin.w, h: lin.h });
       if (app.images[app.cur] !== e) { done(); return; }
@@ -1634,6 +1650,8 @@ async function select(i) {
   if (prev && app.params) prev.params = app.params;
   flushSave();   // the previous photo's last edit, before anything switches
   app.cur = i;
+  const tOpen = performance.now();
+  perf.mark('open', { raw: !!e.raw || RAW_EXT.has((e.name || '').split('.').pop().toLowerCase()), size: e.size || e.file?.size || 0 });
   // Developed a moment ago (see keepDeveloped): back at once, without reading the file again.
   const kept = e.raw && !e.linear ? takeDeveloped(e.id) : null;
   if (kept) { e.linear = kept; e.meta = kept.meta || e.meta; }
@@ -1691,6 +1709,7 @@ async function select(i) {
   app.img = { name: e.name, aspect, kind: e.kind, raw: e.raw };
   track('photo_open', e.raw ? 'raw' : (e.kind || 'other'));
   await applySource(e);
+  perf.mark('shown', { ms: Math.round(performance.now() - tOpen), developed: !!e.linear, w, h });
   $('fileTitle').textContent = e.name;
   document.body.classList.add('has-image');
   app.buildPanel();
@@ -3104,6 +3123,8 @@ window.addEventListener('paste', (e) => {
 // ================================================================== keyboard
 
 window.addEventListener('keydown', (e) => {
+  // Hidden: copy the performance report (src/perf.js).
+  if ((e.metaKey || e.ctrlKey) && e.altKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); perf.copyReport(app); return; }
   const tag = e.target?.tagName;
   if (tag === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
   if (tag === 'TEXTAREA' || document.querySelector('dialog[open]')) return;
