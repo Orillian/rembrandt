@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(desktop)]
+mod credentials;
+#[cfg(desktop)]
 mod devcache;
 #[cfg(desktop)]
 mod pixels;

@@ -12,6 +12,7 @@ import { recordReplay, replaySupported } from './replay.js';
 import { icon } from './icons.js';
 import { DESTINATIONS, destination, deliver } from './export-dest.js';
 import { track } from './feedback.js';
+import { credentialsSupported, manifestFor, withCredentials } from './credentials.js';
 
 const FORMATS = { jpeg: ['image/jpeg', '.jpg'], png: ['image/png', '.png'], webp: ['image/webp', '.webp'], tiff: ['image/tiff', '.tif'] };
 const SIZES = [
@@ -27,6 +28,17 @@ export function saveExportDefaults() {
   try { localStorage.setItem(OPTS_KEY, JSON.stringify(opts)); } catch { /* ignore */ }
 }
 export const FORMAT_EXT = { jpeg: '.jpg', png: '.png', webp: '.webp', tiff: '.tif' };
+
+// Export presets: named export settings, the built-in ones and yours (prefs.exportPresets).
+const PRESET_KEYS = ['format', 'quality', 'long', 'suffix', 'dest', 'recipe', 'tiffBits', 'hdr', 'watermark', 'credentials'];
+export const BUILTIN_EXPORT_PRESETS = [
+  { name: 'Full size JPEG', builtin: true, opts: { format: 'jpeg', quality: 92, long: 0, suffix: '-edit', recipe: false, watermark: false } },
+  { name: 'Instagram (1080 px)', builtin: true, opts: { format: 'jpeg', quality: 90, long: 1080, suffix: '-ig', recipe: false } },
+  { name: 'Web (2048 px)', builtin: true, opts: { format: 'jpeg', quality: 85, long: 2048, suffix: '-web' } },
+  { name: 'Print (16-bit TIFF)', builtin: true, opts: { format: 'tiff', tiffBits: 16, long: 0, suffix: '-print', recipe: false, watermark: false } },
+];
+export const exportPresets = () => [...BUILTIN_EXPORT_PRESETS, ...(prefs.exportPresets || [])];
+const presetOf = (o) => Object.fromEntries(PRESET_KEYS.map((k) => [k, k === 'watermark' ? !!prefs.watermark?.on : o[k]]).filter(([, v]) => v !== undefined));
 
 const doneMessage = (d, n) => {
   const what = `${n} photo${n === 1 ? '' : 's'}`;
@@ -158,7 +170,17 @@ export async function renderPixels(app, { long = 0 } = {}, p = app.params, mats 
 }
 
 // Renders `p` (default: the photo being edited) with the engine's current image.
-export async function renderExport(app, { format, quality, long, recipe, meta, tiffBits, hdr }, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+export async function renderExport(app, opts, p = app.params, mats = (pp, w, h) => app.outputMats(pp, w, h)) {
+  const r = await renderEncoded(app, opts, p, mats);
+  // Content Credentials last: the signature covers the finished file.
+  if (opts.credentials && credentialsSupported() && opts.format !== 'tiff') {
+    const mime = FORMATS[opts.format][0];
+    const original = opts.original || app.images?.[app.cur]?.name || 'photo';
+    r.blob = await withCredentials(r.blob, mime, manifestFor(p, { title: original.replace(/\.[^.]+$/, '') + FORMATS[opts.format][1], original, version: window.LUMEN_BUILD?.version || 'dev' }));
+  }
+  return r;
+}
+async function renderEncoded(app, { format, quality, long, recipe, meta, tiffBits, hdr }, p, mats) {
   track('export', hdr ? `${format}-hdr` : format);
   if (format === 'tiff' && tiffBits !== 8) return renderTiff16(app, long, p, mats);
   const { image, outW, outH } = await renderPixels(app, { long }, p, mats);
@@ -211,7 +233,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
     }
     const special = opts.format === 'compare' || opts.format === 'replay';
     // A chip names a choice made in the ⋯ menu, so it's never hidden state.
-    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : '', opts.format === 'tiff' ? `${opts.tiffBits === 8 ? 8 : 16}-bit` : '', opts.format === 'jpeg' && opts.hdr ? 'HDR' : ''].filter(Boolean).join(' · ');
+    chip.textContent = [SPECIAL[opts.format], opts.recipe && opts.format !== 'replay' ? 'with recipe' : '', prefs.watermark?.on && watermarkText() && opts.format !== 'replay' ? 'watermark' : '', opts.format === 'tiff' ? `${opts.tiffBits === 8 ? 8 : 16}-bit` : '', opts.format === 'jpeg' && opts.hdr ? 'HDR' : '', opts.credentials && credentialsSupported() && FORMAT_EXT[opts.format] && opts.format !== 'tiff' ? 'Content Credentials' : ''].filter(Boolean).join(' · ');
     chip.hidden = !chip.textContent;
     q.el.style.display = opts.format === 'png' || opts.format === 'tiff' || special ? 'none' : '';
     size.el.closest('.field').style.display = opts.format === 'replay' ? 'none' : '';
@@ -232,6 +254,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
     opts.format === 'tiff' ? { label: '16 bits per channel', checked: opts.tiffBits !== 8, onClick: () => { opts.tiffBits = opts.tiffBits === 8 ? 16 : 8; update(); } } : null,
     opts.format === 'jpeg' ? { label: 'HDR (brighter highlights on HDR screens)', checked: !!opts.hdr, onClick: () => { opts.hdr = !opts.hdr; update(); } } : null,
     { label: 'Include how it was edited', checked: !!opts.recipe, onClick: () => { opts.recipe = !opts.recipe; update(); } },
+    credentialsSupported() && opts.format !== 'tiff' ? { label: 'Content Credentials (a signed record of the edits)', checked: !!opts.credentials, onClick: () => { opts.credentials = !opts.credentials; update(); } } : null,
     { label: watermarkText() ? `Watermark “${watermarkText()}”` : 'Watermark (set it up in Settings)', checked: !!prefs.watermark?.on, onClick: () => {
       if (!watermarkText()) { status.textContent = 'Add your name, copyright or a watermark text in Settings › Preferences › Export first.'; return; }
       prefs.watermark = { ...WATERMARK, ...prefs.watermark, on: !prefs.watermark?.on }; savePrefs(); update();
@@ -244,6 +267,55 @@ export function openExport(app, ids = null, renderPhoto = null) {
   custom.addEventListener('keydown', (e) => e.stopPropagation());
   name.addEventListener('keydown', (e) => e.stopPropagation());
   const q = slider({ label: 'Quality', min: 40, max: 100, def: 92, get: () => opts.quality, set: (v) => { opts.quality = v; } });
+
+  // Presets: picking one sets everything below; Save keeps the current settings under a name.
+  const presetSel = el('select', { class: 'text-input', 'aria-label': 'Export preset' });
+  const presetName = el('input', { class: 'text-input', type: 'text', placeholder: 'Preset name', hidden: true, 'aria-label': 'Preset name' });
+  const presetSave = el('button', { class: 'btn sm', type: 'button', hidden: true }, 'Save');
+  const presetDel = el('button', { class: 'icon-btn sm', type: 'button', title: 'Delete this preset', 'aria-label': 'Delete this preset', hidden: true }, icon('trash'));
+  const paintPresets = (sel = '') => {
+    presetSel.replaceChildren(el('option', { value: '' }, 'Choose a preset…'),
+      ...exportPresets().map((p) => el('option', { value: p.name, selected: p.name === sel }, p.name)),
+      el('option', { value: '+' }, 'Save current settings as a preset…'));
+    presetDel.hidden = !sel || !!exportPresets().find((p) => p.name === sel)?.builtin;
+  };
+  const applyPreset = (p) => {
+    const o = p.opts;
+    for (const k of PRESET_KEYS) if (k !== 'watermark' && o[k] !== undefined) opts[k] = o[k];
+    if (o.watermark !== undefined && (!o.watermark || watermarkText())) prefs.watermark = { ...WATERMARK, ...prefs.watermark, on: !!o.watermark };
+    if (!destination(opts.dest).ready()) opts.dest = 'device';
+    fmt.set(FORMAT_EXT[opts.format] ? opts.format : null);
+    size.set(SIZES.some((s) => s.value === opts.long) ? opts.long : -1);
+    custom.value = SIZES.some((s) => s.value === opts.long) ? '' : opts.long;
+    q.refresh();
+    if (o.suffix !== undefined) name.value = batch ? opts.suffix : `${base}${opts.suffix}`;
+    update(); paintDest();
+  };
+  presetSel.addEventListener('change', () => {
+    const v = presetSel.value;
+    if (v === '+') { presetSel.hidden = true; presetName.hidden = presetSave.hidden = false; presetName.focus(); return; }
+    const p = exportPresets().find((x) => x.name === v);
+    if (p) applyPreset(p);
+    presetDel.hidden = !p || !!p.builtin;
+  });
+  const endSave = (keep) => {
+    const nm = presetName.value.trim();
+    if (keep && nm) {
+      if (!batch) { const n0 = name.value.trim(); if (n0.startsWith(base)) opts.suffix = n0.slice(base.length); } else opts.suffix = name.value;
+      prefs.exportPresets = [...(prefs.exportPresets || []).filter((p) => p.name !== nm), { name: nm, opts: presetOf(opts) }];
+      savePrefs();
+      status.textContent = `Saved the preset “${nm}”`; status.className = 'export-status';
+    }
+    presetName.value = ''; presetName.hidden = presetSave.hidden = true; presetSel.hidden = false;
+    paintPresets(keep && nm ? nm : '');
+  };
+  presetSave.addEventListener('click', () => endSave(true));
+  presetName.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') endSave(true); else if (e.key === 'Escape') { e.preventDefault(); endSave(false); } });
+  presetDel.addEventListener('click', () => {
+    prefs.exportPresets = (prefs.exportPresets || []).filter((p) => p.name !== presetSel.value);
+    savePrefs(); paintPresets('');
+  });
+  paintPresets();
 
   // Where the photos go.
   if (!destination(opts.dest).ready()) opts.dest = 'device';
@@ -336,6 +408,7 @@ export function openExport(app, ids = null, renderPhoto = null) {
   dlg.append(
     el('div', { class: 'dlg-head' }, el('h2', {}, batch ? `Export ${n} photo${n > 1 ? 's' : ''}` : 'Export photo')),
     el('div', { class: 'dlg-body' },
+      el('div', { class: 'field' }, el('span', {}, 'Preset'), el('div', { class: 'row export-presets' }, presetSel, presetName, presetSave, presetDel)),
       el('label', { class: 'field' }, el('span', {}, batch ? 'Add to file names' : 'File name'), name),
       el('div', { class: 'field' }, el('span', {}, 'Format'), el('div', { class: 'row' }, fmt.el, chip, extras)),
       q.el,

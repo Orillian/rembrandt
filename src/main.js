@@ -17,7 +17,7 @@ import { lensPass, chain, setBackgroundImage, hasBackgroundImage, quality as len
 import { refocusPass, refocusActive } from './ai/refocus.js';
 import { studioPass, motionPass } from './ai/studio.js';
 import { buildAIPanel } from './ai/panel-ai.js';
-import { decodeFile, decodeRawLinear, decodeCameraJpeg, sampleData, thumbnail, ACCEPT, RAW_EXT, readNativeFile } from './loader.js';
+import { decodeFile, decodeRawLinear, developAhead, decodeCameraJpeg, sampleData, thumbnail, ACCEPT, RAW_EXT, readNativeFile } from './loader.js';
 import * as folders from './folders.js';
 import { isPhotoName } from './folders.js';
 import { readXmpSettings, crsToParams, embeddedXmp, sidecarNames, buildXmp } from './xmp.js';
@@ -159,6 +159,33 @@ const app = {
       this.persist();
       this.updateUndo();
     }
+  },
+
+  // Snapshots: named versions of the open photo's edit, kept with the photo ({ id, name, params, at }).
+  // Going to one is an ordinary edit, so Undo goes back.
+  snapshots() { return this.images[this.cur]?.snapshots || []; },
+  saveSnapshot(name) {
+    const e = this.images[this.cur];
+    if (!e || !this.params) return null;
+    const list = e.snapshots || [];
+    const s = { id: uid(), name: (name || '').trim() || `Snapshot ${list.length + 1}`, params: clone(this.params), at: Date.now() };
+    e.snapshots = [...list, s];
+    catalog.updatePhoto(e.id, { snapshots: e.snapshots });
+    return s;
+  },
+  applySnapshot(id) {
+    const s = this.snapshots().find((x) => x.id === id);
+    if (!s || !this.img) return;
+    this.params = deepMerge(defaultParams(this.img.aspect), clone(s.params));
+    this.commit();
+    this.rebuildPanel();
+    this.requestRender();
+  },
+  updateSnapshot(id, patch) {
+    const e = this.images[this.cur];
+    if (!e?.snapshots) return;
+    e.snapshots = patch ? e.snapshots.map((x) => (x.id === id ? { ...x, ...patch } : x)) : e.snapshots.filter((x) => x.id !== id);
+    catalog.updatePhoto(e.id, { snapshots: e.snapshots });
   },
 
   restore(p) {
@@ -370,7 +397,7 @@ const app = {
   startPick(kind) {
     this.state.pick = kind;
     viewer.classList.add('picking');
-    this.toast(kind === 'sun' ? 'Click where the light comes from' : kind === 'focus' ? 'Click where the photo should be in focus' : kind === 'wb' ? 'Click something that should be neutral grey or white' : kind === 'color' ? 'Click the color to select' : 'Click a tone to select');
+    this.toast(kind === 'sun' ? 'Click where the light comes from' : kind === 'focus' ? 'Click where the photo should be in focus' : kind === 'wb' ? 'Click something that should be neutral grey or white' : kind === 'color' ? 'Click the color to select' : kind === 'point' ? 'Click the color to change' : 'Click a tone to select');
   },
   pickWhiteBalance() { if (this.img) this.startPick('wb'); },
   finishPick(uv) {
@@ -395,6 +422,16 @@ const app = {
       };
       if (ai.has(e, 'depth')) set();
       else ai.analyze(e, 'depth').then(set, (err) => this.aiFailed(err));
+      return;
+    }
+    if (kind === 'point') {
+      // The colour as the Point Color stage sees it (after white balance and tone), from the GPU.
+      const [L, a, b] = this.engine.probeColor(effectiveParams(this.renderParams()), uv[0], uv[1]);
+      const swatch = '#' + this.sourceAt(uv).map((x) => Math.round(255 * clamp(x, 0, 1) ** (1 / 2.2)).toString(16).padStart(2, '0')).join('');
+      (this.params.pointColor ||= []).push({ L, a, b, swatch, hue: 0, sat: 0, lum: 0, range: 50 });
+      this.state.pointColor = this.params.pointColor.length - 1;
+      this.commit();
+      this.rebuildPanel();
       return;
     }
     if (kind === 'wb') {
@@ -1108,7 +1145,7 @@ async function importItems(items, opts = {}) {
   } else if (bad) app.toast(bad, { ms: 6000 });
   if (opts.catalog?.report && done.length) showMigrationReport(opts.catalog, fresh);
   updateEmpty();
-  if (done.length) queueSmartIndex();
+  if (done.length) { queueSmartIndex(); developAheadLater(done); }
   return done;
 }
 
@@ -1479,7 +1516,7 @@ function autoPreviewLong(engine) {
   // Drawing on the CPU (no graphics driver for the browser or the system's web view): everything is
   // many times slower, so say so once.
   if (/llvmpipe|softpipe|swiftshader|basic render|software/i.test(gpu)) {
-    setTimeout(() => app.toast(`Graphics acceleration isn’t available here (${gpu}), so editing is slow. Updating the graphics driver usually turns it on.`, { ms: 10000 }), 2500);
+    setTimeout(() => app.toast('This computer is drawing without its graphics card, so editing is slow. Updating the graphics driver usually fixes it.', { ms: 10000 }), 2500);
   }
   return pick;
 }
@@ -1720,6 +1757,50 @@ function prefetchNeighbours() {
       if (app.images[app.cur] !== cur) return;
     }
   }, 1000);
+}
+
+// Desktop app: imported RAWs develop ahead, one at a time in the background, into the native disk cache
+// (src-tauri/src/devcache.rs), so opening one later skips LibRaw. Only while you aren't editing and
+// the open photo isn't developing. `e.ahead` is 'queued' (kept, so a restart picks up where it was),
+// then the app version once done. At most AHEAD_MAX per import: about what the cache holds.
+const AHEAD_MAX = 200;
+const ahead = { queue: [], queued: new Set(), running: false };
+const aheadVersion = () => window.LUMEN_BUILD?.version || 'dev';
+function developAheadLater(list, { restart = false } = {}) {
+  if (!window.__TAURI_INTERNALS__ || isMobileApp) return;
+  let n = 0;
+  for (const e of list) {
+    if (n >= AHEAD_MAX) break;
+    if (!e || ahead.queued.has(e.id) || e.ahead === aheadVersion() || (restart && e.ahead !== 'queued')) continue;
+    if (e.raw === false || !RAW_EXT.has((e.name || '').split('.').pop().toLowerCase())) continue;
+    ahead.queued.add(e.id);
+    ahead.queue.push(e);
+    n++;
+    if (e.ahead !== 'queued') { e.ahead = 'queued'; catalog.updatePhoto(e.id, { ahead: 'queued' }).catch(() => {}); }
+  }
+  runAhead();
+}
+async function runAhead() {
+  if (ahead.running) return;
+  ahead.running = true;
+  try {
+    while (ahead.queue.length) {
+      await whenQuiet();
+      const cur = app.images[app.cur];
+      if (cur?.rawBusy || cur?.fullBusy || app.state.sliding || performance.now() - lastSlide < EDIT_QUIET) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      const e = ahead.queue.shift();
+      ahead.queued.delete(e.id);
+      if (!app.images.includes(e) || e.offline || e.linked || e.rawError || e.ahead === aheadVersion()) continue;
+      const f = await originalFile(e).catch(() => null);
+      if (!f) continue;
+      const t0 = performance.now();
+      const ok = await developAhead(f, prefs.rawQuality);
+      if (ok === null) { ahead.queue = []; ahead.queued.clear(); break; }   // no native side here
+      perf.mark('ahead', { ms: Math.round(performance.now() - t0), ok });
+      e.ahead = aheadVersion();
+      catalog.updatePhoto(e.id, { ahead: e.ahead }).catch(() => {});
+    }
+  } finally { ahead.running = false; }
 }
 
 // Waits for the open photo's full-size develop (exports, 100 % zoom); starts it if needed.
@@ -2756,7 +2837,7 @@ async function renderPhotoForExport(id, opts) {
   if (e === cur && app.img) {
     if (engineDirty) { await applySource(cur); engineDirty = false; }
     await ai.ensure(cur, app.params);
-    const { blob } = await renderExport(app, { ...opts, meta: e.meta });
+    const { blob } = await renderExport(app, { ...opts, meta: e.meta, original: e.name });
     return { blob, base };
   }
   const file = await originalFile(e);
@@ -3421,6 +3502,7 @@ function boot() {
     registerKind('smart-index', (d, job) => { smartQueued = true; return runSmartIndex(job); });
     registerKind('consistent', (d, job) => runConsistent(d.ids, d.heroId, job));
     restoreJobs();
+    developAheadLater(app.images, { restart: true });   // photos the last session didn't get to
     sweepFolders(true);
     setInterval(() => sweepFolders(false), 60000);
     setInterval(sweepWatched, 8000);

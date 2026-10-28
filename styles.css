@@ -1405,3 +1405,22 @@ body.ws-no-studio .nav-ask { display: none; }
 .usage-ask { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 850; width: min(340px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 4px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop); font-size: 13px; }
 .usage-ask b { font-size: 13.5px; }
 .usage-ask p { margin: 0; color: var(--text-2); line-height: 1.45; }
+
+/* Point Color: the picked colours as swatches, the selected one ringed */
+.pc { display: grid; gap: 6px; }
+.pc-swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pc-swatch, .pc-add { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line-strong); padding: 0; cursor: pointer; }
+.pc-swatch.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.pc-add { display: grid; place-items: center; background: transparent; color: inherit; }
+.pc-add svg { width: 14px; height: 14px; }
+
+/* Snapshots */
+.snaps { display: grid; gap: 8px; }
+.snaps-new { display: flex; gap: 6px; }
+.snaps-new .text-input { flex: 1; min-width: 0; }
+.snaps-list { display: grid; gap: 2px; }
+.snap { display: flex; align-items: center; gap: 2px; }
+.snap-name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: inherit; padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+.snap-name:hover { background: var(--line); }
+.snap-rename { flex: 1; min-width: 0; }
+.export-presets select, .export-presets input { flex: 1; min-width: 0; }

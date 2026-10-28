@@ -252,6 +252,31 @@ async function nativePreview(file, long) {
   return { bitmap, fullW: swap ? fh : fw, fullH: swap ? fw : fh };
 }
 
+// Signs an exported file with Content Credentials (src/credentials.js): the signed bytes, or null
+// where there's no desktop app.
+export async function nativeSign(bytes, mime, manifest) {
+  if (!globalThis.__TAURI_INTERNALS__) return null;
+  const server = await pixelServer();
+  if (!server) return null;
+  const m = new TextEncoder().encode(manifest), body = new Uint8Array(4 + m.length + bytes.length);
+  new DataView(body.buffer).setUint32(0, m.length, true);
+  body.set(m, 4); body.set(bytes, 4 + m.length);
+  const r = await fetch(`http://127.0.0.1:${server.port}/sign?key=${server.key}&${new URLSearchParams({ mime })}`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body });
+  if (!r.ok) throw new Error(`Content Credentials: ${await r.text()}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+// Develops a RAW ahead, in the background, into the native side's disk cache (at half size: the
+// cache holds a few hundred of those), so it opens without LibRaw. True when done, false when this
+// photo couldn't be developed, null where there's no native side.
+export async function developAhead(file, quality) {
+  if (!nativeRaw) return null;
+  try {
+    const r = await nativePost(file, async () => readBytes(file)?.slice(0) || file.arrayBuffer(), '/raw', { quality, half: 1, preview: 1, long: 0, store: 1 });
+    return r ? true : null;
+  } catch { return false; }
+}
+
 // Photos developed before come from the native side's disk cache (src-tauri/src/devcache.rs), and
 // a half-size request may get the stored full-size develop instead (`half` in the result says which).
 async function decodeNative(file, buffer, { quality, half, preview, long }) {

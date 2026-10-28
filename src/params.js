@@ -26,6 +26,8 @@ export function defaultParams(aspect = 1.5) {
     grain: { amount: 0, size: 25, roughness: 50 },
     curve: { master: ident(), r: ident(), g: ident(), b: ident() },
     hsl: { hue: Array(8).fill(0), sat: Array(8).fill(0), lum: Array(8).fill(0) },
+    // Point Color: picked colours and their changes (see pointColorUniforms in engine/src/pipeline.js).
+    pointColor: [],
     grading: {
       shadows: { h: 220, s: 0, l: 0 },
       midtones: { h: 30, s: 0, l: 0 },
@@ -71,7 +73,7 @@ export const GROUPS = {
   color: ['temp', 'tint', 'vibrance', 'saturation', 'bw'],
   effects: ['texture', 'clarity', 'dehaze', 'haze', 'vignette', 'grain'],
   curve: ['curve'],
-  mixer: ['hsl'],
+  mixer: ['hsl', 'pointColor'],
   grading: ['grading'],
   look: ['look'],
   detail: ['sharpen', 'nr'],

@@ -624,6 +624,28 @@ export class Engine {
     gl.disable(gl.SCISSOR_TEST);
   }
 
+  // The colour Point Color compares with at (u, v) of the photo (0–1, top-left origin): Oklab
+  // [L, a, b], averaged over a few pixels around it.
+  probeColor(p, u, v) {
+    const gl = this.gl, L = this.L;
+    this.process(p, null);
+    const mu = mainUniforms(p);
+    const t = this.target(1, 1, { fmt: this.fullFloat ? gl.RGBA32F : gl.RGBA16F });
+    const px = new Float32Array(4), sum = [0, 0, 0];
+    const d = [1.5 / L.w, 1.5 / L.h];
+    try {
+      for (const [dx, dy] of [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const uv = [Math.min(1, Math.max(0, u + dx * d[0])), Math.min(1, Math.max(0, v + dy * d[1]))];
+        this.draw(this.P.main, { ...mu, uPre: L.T.pre.tex, uGuideAB: mu.uGuideOn ? L.guideTex : this.dummy, uTexel: [1 / L.w, 1 / L.h], uProbe: 1, uProbeUv: uv }, t);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        for (let i = 0; i < 3; i++) sum[i] += px[i] / 5;
+      }
+    } finally { this.free(t); }
+    return sum;
+  }
+
   // Render into an offscreen RGBA8 buffer and read it back. Rows come out top-first.
   readPixels(p, w, h, v) {
     const gl = this.gl;

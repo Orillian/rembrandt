@@ -338,6 +338,14 @@ uniform int uGradeOn;
 uniform vec3 uGS, uGM, uGH, uGG;  // (a, b, EV) per zone
 uniform float uGBalance, uGBlend;
 uniform int uBW;
+// Point Color: up to 8 picked colours (Oklab L, a, b) and what to do to each (hue shift in degrees,
+// saturation, lightness, range 0–1). uProbe: output instead the Oklab colour Point Color compares
+// with at uProbeUv (picking a colour).
+uniform int uPCn;
+uniform vec3 uPCcol[8];
+uniform vec4 uPCadj[8];
+uniform int uProbe;
+uniform vec2 uProbeUv;
 in vec2 vUv; out vec4 o;
 
 // Oklab hue centres (degrees) for red, orange, yellow, green, cyan, blue, purple, magenta.
@@ -353,13 +361,14 @@ float mixWeight(float hDeg, int i) {
 }
 
 void main() {
-  vec3 rgb = textureLod(uPre, vUv, 0.0).rgb;
+  vec2 uv = uProbe == 1 ? uProbeUv : vUv;
+  vec3 rgb = textureLod(uPre, uv, 0.0).rgb;
   float Y = max(lum(rgb), 1.0 / 65536.0);
 
   // Base/detail tone zones and clarity from the edge-preserving log-luminance base layer.
   if (uGuideOn == 1) {
     float g = log2(Y);
-    vec2 ab = textureLod(uGuideAB, vUv, 0.0).xy;
+    vec2 ab = textureLod(uGuideAB, uv, 0.0).xy;
     float base = ab.x * g + ab.y;
     float ev = base - log2(GREY);
     float gain = zoneGain(shownLightness(exp2(base)), uTone);
@@ -369,15 +378,17 @@ void main() {
   }
   if (uTexture != 0.0) {
     vec2 d = uTexel * 1.5;
-    float yb = 0.25 * (lum(textureLod(uPre, vUv + d, 0.0).rgb) + lum(textureLod(uPre, vUv - d, 0.0).rgb)
-                     + lum(textureLod(uPre, vUv + vec2(d.x, -d.y), 0.0).rgb) + lum(textureLod(uPre, vUv + vec2(-d.x, d.y), 0.0).rgb));
+    float yb = 0.25 * (lum(textureLod(uPre, uv + d, 0.0).rgb) + lum(textureLod(uPre, uv - d, 0.0).rgb)
+                     + lum(textureLod(uPre, uv + vec2(d.x, -d.y), 0.0).rgb) + lum(textureLod(uPre, uv + vec2(-d.x, d.y), 0.0).rgb));
     rgb *= exp2(clamp(log2(Y) - log2(max(yb, 1.0 / 65536.0)), -1.0, 1.0) * uTexture * 0.8);
   }
 
   if (uWBOn == 1) rgb = max(uWB * rgb, 0.0);
 
-  if (uMixOn == 1 || uVib != 0.0 || uSat != 0.0 || uGradeOn == 1 || uBW == 1) {
+  if (uMixOn == 1 || uPCn > 0 || uProbe == 1 || uVib != 0.0 || uSat != 0.0 || uGradeOn == 1 || uBW == 1) {
     vec3 lab = oklab(max(rgb, 0.0));
+    if (uProbe == 1) { o = vec4(lab, 1.0); return; }
+    vec3 lab0 = lab;
     float C = length(lab.yz);
     float h = atan(lab.z, lab.y);
     float chromaW = smoothstep(0.005, 0.05, C);
@@ -394,6 +405,30 @@ void main() {
       C *= max(1.0 + ds * chromaW, 0.0);
       // Lightness change in linear light, weighted by how colourful the pixel is.
       lab.x *= exp2(dl * 0.55 * chromaW * smoothstep(0.02, 0.12, C));
+    }
+
+    // Point Color: each picked colour selects pixels close to it in hue, chroma and lightness (wider
+    // with its range), feathered, and shifts their hue, saturation and lightness.
+    if (uPCn > 0) {
+      float C0 = length(lab0.yz), h0 = atan(lab0.z, lab0.y);
+      for (int i = 0; i < 8; i++) {
+        if (i >= uPCn) break;
+        vec3 pc = uPCcol[i];
+        vec4 adj = uPCadj[i];
+        float pcC = length(pc.yz);
+        float r = adj.w;
+        float dh = abs(mod(degrees(h0 - atan(pc.z, pc.y)) + 540.0, 360.0) - 180.0);
+        float wh = 1.0 - smoothstep(6.0 + 34.0 * r, 14.0 + 66.0 * r, dh);
+        // Hue means little for nearly grey colours: those match on chroma and lightness only.
+        wh = mix(1.0, wh, smoothstep(0.01, 0.04, min(C0, pcC)));
+        float wc = 1.0 - smoothstep(0.03 + 0.09 * r, 0.06 + 0.18 * r, abs(C0 - pcC));
+        float wl = 1.0 - smoothstep(0.12 + 0.28 * r, 0.25 + 0.45 * r, abs(lab0.x - pc.x));
+        float w = wh * wc * wl * smoothstep(0.0, 0.02, C0);
+        if (w <= 0.0) continue;
+        h += radians(adj.x) * w;
+        C *= max(1.0 + adj.y * w, 0.0);
+        lab.x *= exp2(adj.z * 0.6 * w);
+      }
     }
 
     // Vibrance: lift muted colours more than saturated ones, and protect skin-like hues a little.

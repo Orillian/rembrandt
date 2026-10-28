@@ -79,7 +79,22 @@ export function mainUniforms(p) {
     uGBalance: g.balance / 100,
     uGBlend: g.blending / 100,
     uBW: p.bw ? 1 : 0,
+    ...pointColorUniforms(p.pointColor),
+    uProbe: 0,
   };
+}
+
+// Point Color: [{ L, a, b (the picked Oklab colour), hue (−100…100: ±30°), sat, lum (−100…100),
+// range (0…100) }], at most 8; points that change nothing are left out.
+export const POINT_COLORS_MAX = 8;
+function pointColorUniforms(list) {
+  const pts = (list || []).filter((c) => c.hue || c.sat || c.lum).slice(0, POINT_COLORS_MAX);
+  const col = new Float32Array(24), adj = new Float32Array(32);
+  pts.forEach((c, i) => {
+    col.set([c.L, c.a, c.b], i * 3);
+    adj.set([(c.hue / 100) * 30, c.sat / 100, c.lum / 100, (c.range ?? 50) / 100], i * 4);
+  });
+  return { uPCn: pts.length, uPCcol: col, uPCadj: adj };
 }
 
 // ------------------------------------------------------------------ FINAL

@@ -4,7 +4,7 @@ import { slider, section, segmented, iconButton, button, popMenu, toggle } from 
 import { icon } from './icons.js';
 import { autoVertical } from './tool-crop.js';
 import { detectDistortion } from './lens-auto.js';
-import { curveEditor, hslMixer, gradingControl } from './widgets.js';
+import { curveEditor, hslMixer, gradingControl, pointColorControl, snapshotsControl } from './widgets.js';
 import { defaultParams } from './params.js';
 import { LOOKS } from './looks.js';
 import { PROFILES } from '../engine/src/color.js';
@@ -183,8 +183,8 @@ export function buildEditPanel(app) {
   curve.body.append(ce.el);
 
   // --- mixer
-  const mixer = sec('Color Mixer', 'mixer', { id: 'mixer', open: false, onReset: resetPaths(['hsl']) });
-  mixer.body.append(hslMixer(app, reg));
+  const mixer = sec('Color Mixer', 'mixer', { id: 'mixer', open: false, onReset: resetPaths(['hsl', 'pointColor']) });
+  mixer.body.append(hslMixer(app, reg), el('div', { class: 'subhead' }, 'Point Color'), pointColorControl(app, reg));
 
   // --- grading
   const grading = sec('Color Grading', 'grading', { id: 'grading', open: false, onReset: resetPaths(['grading']) });
@@ -243,6 +243,11 @@ export function buildEditPanel(app) {
     S('optics.horizontal', 'Horizontal', -100, 100),
   );
 
-  const root = el('div', { class: 'panel-view' }, tools, profRow, light.el, color.el, look.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el);
+  // --- snapshots
+  const snaps = section('Snapshots', { id: 'snapshots', open: false });
+  snaps.body.append(snapshotsControl(app, reg));
+  reg.push(snaps);
+
+  const root = el('div', { class: 'panel-view' }, tools, profRow, light.el, color.el, look.el, fx.el, curve.el, mixer.el, grading.el, detail.el, optics.el, snaps.el);
   return { el: root, refresh: () => reg.forEach((c) => c.refresh()) };
 }

@@ -15,7 +15,7 @@ use std::time::SystemTime;
 use sha2::{Digest, Sha256};
 use tauri::Manager;
 
-const LIMIT: u64 = 6 << 30;   // 6 GB: about 20 full-size 36 MP photos, or 80 half-size ones
+const LIMIT: u64 = 16 << 30;   // 16 GB: about 55 full-size 36 MP photos, or 220 half-size ones
 
 pub fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().take(16).map(|b| format!("{b:02x}")).collect()

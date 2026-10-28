@@ -4,6 +4,7 @@ import { slider, segmented } from './ui.js';
 import { curveFn } from '../engine/src/pipeline.js';
 import { cssVar, cssRGB } from './theme.js';
 import { HSL_NAMES, HSL_HUES } from './params.js';
+import { icon } from './icons.js';
 
 const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
 
@@ -191,6 +192,96 @@ export function hslMixer(app, reg) {
   build();
   const root = el('div', { class: 'hsl' }, tabs.el, list);
   reg.push({ refresh: () => ctls.forEach((c) => c.refresh()) });
+  return root;
+}
+
+// ------------------------------------------------------------------ snapshots
+
+// Snapshots of the edit: save the current settings under a name, go back to any of them.
+export function snapshotsControl(app, reg) {
+  const root = el('div', { class: 'snaps' });
+  const name = el('input', { class: 'text-input', type: 'text', placeholder: 'Name (optional)', 'aria-label': 'Snapshot name' });
+  const save = () => { const s = app.saveSnapshot(name.value); if (s) { name.value = ''; app.toast(`Saved “${s.name}”`); build(); } };
+  name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  const list = el('div', { class: 'snaps-list' });
+  function build() {
+    list.textContent = '';
+    const snaps = app.snapshots();
+    if (!snaps.length) { list.append(el('p', { class: 'hint' }, 'Save versions of this edit to compare them or come back to one.')); return; }
+    for (const s of snaps) {
+      const label = el('button', { class: 'snap-name', type: 'button', title: 'Go to this snapshot', onclick: () => app.applySnapshot(s.id) }, s.name);
+      // Renamed in place (the system's prompt dialog isn't there in every web view).
+      const rename = el('button', { class: 'icon-btn sm', type: 'button', title: 'Rename', 'aria-label': `Rename ${s.name}`, onclick: () => {
+        const input = el('input', { class: 'text-input snap-rename', type: 'text', value: s.name, 'aria-label': 'Snapshot name' });
+        const done = (keep) => { if (keep && input.value.trim()) app.updateSnapshot(s.id, { name: input.value.trim() }); build(); };
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(true); else if (e.key === 'Escape') done(false); e.stopPropagation(); });
+        input.addEventListener('blur', () => done(true), { once: true });
+        label.replaceWith(input);
+        input.focus(); input.select();
+      } }, icon('pencil'));
+      const update = el('button', { class: 'icon-btn sm', type: 'button', title: 'Replace with the current edit', 'aria-label': `Update ${s.name}`, onclick: () => {
+        app.updateSnapshot(s.id, { params: structuredClone(app.params), at: Date.now() }); app.toast(`Updated “${s.name}”`);
+      } }, icon('save'));
+      const del = el('button', { class: 'icon-btn sm', type: 'button', title: 'Delete', 'aria-label': `Delete ${s.name}`, onclick: () => { app.updateSnapshot(s.id, null); build(); } }, icon('trash'));
+      list.append(el('div', { class: 'snap' }, label, rename, update, del));
+    }
+  }
+  build();
+  root.append(el('div', { class: 'row snaps-new' }, name, el('button', { class: 'btn sm', type: 'button', onclick: save }, 'Save')), list);
+  reg.push({ refresh: () => { if (list.querySelectorAll('.snap').length !== app.snapshots().length) build(); } });
+  return root;
+}
+
+// ------------------------------------------------------------------ point color
+
+// Point Color: pick colours from the photo (the eyedropper), then shift each one's hue, saturation and
+// lightness; Range widens or narrows what counts as that colour. Up to 8, as in Lightroom.
+export function pointColorControl(app, reg) {
+  const root = el('div', { class: 'pc' });
+  const MAX = 8;
+  const list = () => (app.params.pointColor ||= []);
+  const sel = () => Math.min(app.state.pointColor ?? list().length - 1, list().length - 1);
+  let ctls = [];
+  function build() {
+    root.textContent = '';
+    const pts = list();
+    const swatches = el('div', { class: 'pc-swatches', role: 'listbox', 'aria-label': 'Picked colors' },
+      ...pts.map((c, i) => el('button', {
+        class: 'pc-swatch' + (i === sel() ? ' on' : ''), type: 'button', role: 'option', 'aria-selected': String(i === sel()),
+        title: `Color ${i + 1}`, style: `background:${c.swatch || '#888'}`,
+        onclick: () => { app.state.pointColor = i; build(); },
+      })),
+      pts.length < MAX ? el('button', { class: 'pc-add', type: 'button', title: 'Pick a color from the photo', 'aria-label': 'Pick a color from the photo', onclick: () => app.startPick('point') }, icon('picker')) : null);
+    root.append(swatches);
+    ctls = [];
+    const i = sel();
+    if (i < 0) {
+      root.append(el('p', { class: 'hint' }, 'Pick a color in the photo to change just that color.'));
+      return;
+    }
+    const c = pts[i];
+    const hue = Math.atan2(c.b, c.a) * 180 / Math.PI;
+    const tracks = {
+      hue: `linear-gradient(90deg, ${hslCss(hue - 30, 70, 55)}, ${c.swatch}, ${hslCss(hue + 30, 70, 55)})`,
+      sat: `linear-gradient(90deg, hsl(0 0% 50%), ${c.swatch})`,
+      lum: `linear-gradient(90deg, #111, ${c.swatch}, #eee)`,
+    };
+    for (const [key, label, min] of [['hue', 'Hue', -100], ['sat', 'Saturation', -100], ['lum', 'Luminance', -100], ['range', 'Range', 0]]) {
+      const s = slider({
+        label, min, max: 100, step: 1, def: key === 'range' ? 50 : 0, track: tracks[key],
+        get: () => list()[sel()]?.[key] ?? 0,
+        set: (v) => { const p = list()[sel()]; if (p) { p[key] = v; app.requestRender(); } },
+        commit: () => app.commit(),
+      });
+      ctls.push(s);
+      root.append(s.el);
+    }
+    root.append(el('div', { class: 'row' }, el('button', {
+      class: 'btn sm ghost', type: 'button', onclick: () => { list().splice(i, 1); app.state.pointColor = list().length - 1; app.commit(); app.requestRender(); build(); },
+    }, 'Remove this color')));
+  }
+  build();
+  reg.push({ refresh: () => { if (ctls.length !== (sel() < 0 ? 0 : 4) || root.querySelectorAll('.pc-swatch').length !== list().length) build(); else ctls.forEach((c) => c.refresh()); } });
   return root;
 }
 

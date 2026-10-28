@@ -10,7 +10,11 @@
 //                             raw::decode's reply, from the disk cache of developed photos
 //                             (devcache) when it is there. `upgrade`: a stored full-size develop may
 //                             answer a half-size request. Headers say which: X-Half (0 or 1), X-Cached.
+//                             `store=1`: develop into the cache only (photos developed ahead, in the
+//                             background); the reply is empty.
 //   POST /preview?key=…&file=…&long=…   body: the RAW file → its camera JPEG, decoded (raw::embedded_preview)
+//   POST /sign?key=…&mime=image/jpeg   body: u32 length, the manifest JSON, the exported file → the file
+//                             with Content Credentials (credentials::sign)
 //   GET  /file?key=…&path=…   a photo the app may read (in a synced folder, or one it was asked to
 //                             open: the same check as the read_file command) → its bytes
 //
@@ -162,11 +166,29 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
         std::io::copy(&mut f, &mut out)?;
         return out.flush();
     }
-    if method != "POST" || (path != "/raw" && path != "/preview") {
+    if method != "POST" || (path != "/raw" && path != "/preview" && path != "/sign") {
         return fail(&mut out, "404 Not Found", "not found");
     }
     if length > MAX_BODY {
         return fail(&mut out, "413 Payload Too Large", "too large");
+    }
+    if path == "/sign" {
+        let mut b = vec![0u8; length];
+        reader.read_exact(&mut b)?;
+        let Some(app) = APP.get() else { return fail(&mut out, "503 Service Unavailable", "starting") };
+        let n = b.get(0..4).map(|x| u32::from_le_bytes(x.try_into().unwrap()) as usize).unwrap_or(usize::MAX);
+        if b.len() < 4 + n {
+            return fail(&mut out, "400 Bad Request", "bad body");
+        }
+        let manifest = String::from_utf8_lossy(&b[4..4 + n]).into_owned();
+        return match crate::credentials::sign(app, &percent_decode(param("mime")), &manifest, &b[4 + n..]) {
+            Ok(signed) => {
+                write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", signed.len())?;
+                out.write_all(&signed)?;
+                out.flush()
+            }
+            Err(e) => fail(&mut out, "422 Unprocessable Entity", &e),
+        };
     }
     let file = param("file");
     let (body, hash) = if length == 0 {
@@ -208,6 +230,9 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
         for &h in tries {
             if let Some((mut f, len)) = crate::devcache::find(app, &hash, quality, h, long, preview) {
                 drop(body);
+                if num("store") != 0 {
+                    return ok(&mut out, 0, h, true).and_then(|_| out.flush());
+                }
                 ok(&mut out, len as usize, h, true)?;
                 std::io::copy(&mut f, &mut out)?;
                 return out.flush();
@@ -217,8 +242,12 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
     match crate::raw::decode(&body, quality, half, preview, long) {
         Ok(reply) => {
             drop(body);
-            ok(&mut out, reply.len(), half, false)?;
-            out.write_all(&reply)?;
+            if num("store") != 0 {
+                ok(&mut out, 0, half, false)?;
+            } else {
+                ok(&mut out, reply.len(), half, false)?;
+                out.write_all(&reply)?;
+            }
             out.flush()?;
             if let Some(app) = app {
                 crate::devcache::store(app, hash.to_string(), quality, half, long, reply);

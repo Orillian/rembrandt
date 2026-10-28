@@ -57,6 +57,8 @@ export function describe(s) {
     });
     if (parts.length) out.push(`Colour mixer: ${parts.join('; ')}`);
   }
+  const pcs = (s.pointColor || []).filter((c) => c.hue || c.sat || c.lum);
+  if (pcs.length) out.push(`Point color: ${pcs.length} color${pcs.length === 1 ? '' : 's'} changed`);
   const g = s.grading;
   if (g) {
     const zones = ['shadows', 'midtones', 'highlights', 'global'].filter((z) => g[z]?.s || g[z]?.l).map((z) => `${z} ${Math.round(g[z].h)}° ${Math.round(g[z].s)}%`);
