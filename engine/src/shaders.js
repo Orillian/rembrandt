@@ -465,6 +465,9 @@ export const FINAL = HEAD + LIB + `
 uniform sampler2D uIn, uCurve;
 uniform mat3 uToImage, uToCrop;
 uniform int uCropTest, uClip, uOverlay, uCurveOn, uPathToWhite, uDither;
+// While a slider moves: noise reduction on 3 × 3 samples spread over the same radius instead of 5 × 5,
+// no despeckle, a coarser gamut search. Sharp again, and exact, the moment the slider is let go.
+uniform int uFast;
 uniform vec3 uBg;
 uniform vec2 uInSize, uFullSize;
 uniform float uLod, uSharpMask, uCropAspect, uTC, uTK, uTW, uSpeckle, uSpots;
@@ -551,9 +554,12 @@ vec3 denoise(vec2 uv, vec2 tx, vec3 c0) {
   float sc = mix(0.3, 1.6, uNR.y);
   float Ys = 0.0, wYs = 0.0, wCs = 0.0;
   vec3 cs = vec3(0.0);
+  int n = uFast == 1 ? 1 : 2;
+  float step_ = uFast == 1 ? 2.0 : 1.0;
   for (int j = -2; j <= 2; j++) {
     for (int i = -2; i <= 2; i++) {
-      vec2 off = vec2(float(i), float(j));
+      if (abs(i) > n || abs(j) > n) continue;
+      vec2 off = vec2(float(i), float(j)) * step_;
       vec3 c = at(uv + off * tx * 1.25);
       float Y = max(lum(c), 1e-5);
       float dl = log2(Y) - l0;
@@ -617,7 +623,9 @@ vec3 gamutMap(vec3 lin, bool soft) {
   vec3 t = TO_SRGB * unOklab(vec3(L, dir * C));
   if (all(greaterThanEqual(t, vec3(-1e-5))) && all(lessThanEqual(t, vec3(1.00001)))) lo = C;
   else {
+    int steps = uFast == 1 ? 6 : 12;
     for (int i = 0; i < 12; i++) {
+      if (i >= steps) break;
       float mid = 0.5 * (lo + hi);
       vec3 s = TO_SRGB * unOklab(vec3(L, dir * mid));
       if (all(greaterThanEqual(s, vec3(-1e-5))) && all(lessThanEqual(s, vec3(1.00001)))) lo = mid; else hi = mid;
@@ -645,7 +653,7 @@ void main() {
   vec3 rgb = base.rgb;
   vec2 tx = exp2(uLod) / uInSize;
 
-  if (uSpeckle > 0.0) rgb = despeckle(uv, tx, rgb, uSpeckle);
+  if (uSpeckle > 0.0 && uFast == 0) rgb = despeckle(uv, tx, rgb, uSpeckle);
   if (uNR.x > 0.0 || uNR.y > 0.0) rgb = denoise(uv, tx, rgb);
   if (uSharp.x > 0.0) {
     vec2 r = tx * uSharp.y;

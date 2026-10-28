@@ -589,6 +589,7 @@ export class Engine {
       uClip: v.clip ? 1 : 0,
       uSpots: v.spots || 0,
       uDither: v.float ? 0 : 1,
+      uFast: v.fast ? 1 : 0,
       uOverlay: v.overlayId ? 1 : 0,
       uBg: v.bg || [0.07, 0.075, 0.085],
       uInSize: [this.L.w, this.L.h],

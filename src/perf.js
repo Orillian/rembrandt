@@ -22,6 +22,30 @@ export function frame(cpuMs, sliding) {
   lastFrame = sliding ? now : 0;
 }
 
+// What paces a drag: how often the web view offers a frame (requestAnimationFrame) and how often the
+// slider reports a move, measured during drags. Frames every 33 ms with both at 16 ms would be the
+// app's doing; frames offered only every 33 ms, the system's (Low Power Mode, for one).
+const rafGaps = [], inputGaps = [];
+let probing = false, lastInput = 0;
+export function dragStart() {
+  if (probing) return;
+  probing = true;
+  let last = 0;
+  const tick = (t) => {
+    if (!probing) return;
+    if (last && t - last < 500) { rafGaps.push(t - last); if (rafGaps.length > 600) rafGaps.shift(); }
+    last = t;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+export function dragEnd() { probing = false; lastInput = 0; }
+export function dragInput() {
+  const now = performance.now();
+  if (probing && lastInput && now - lastInput < 500) { inputGaps.push(now - lastInput); if (inputGaps.length > 600) inputGaps.shift(); }
+  lastInput = now;
+}
+
 const pct = (list, p) => {
   if (!list.length) return null;
   const s = [...list].sort((a, b) => a - b);
@@ -121,6 +145,8 @@ export function report(app) {
       intervalP95: pct(frames.map((f) => f[0]), 0.95),
       cpuMedian: pct(frames.map((f) => f[1]), 0.5),
       cpuP95: pct(frames.map((f) => f[1]), 0.95),
+      rafMedian: pct(rafGaps, 0.5),
+      inputMedian: pct(inputGaps, 0.5),
     } : null,
     gpuStages: (() => { try { return gpuStages(app); } catch (e) { return String(e); } })(),
     events,

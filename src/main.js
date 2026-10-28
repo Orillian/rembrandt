@@ -149,7 +149,7 @@ const app = {
   view: { mode: 'edit', fit: true, scale: 1, pan: [0, 0], fitScale: 1 },
 
   // ------------------------------------------------------------ edits
-  set(path, v) { setPath(this.params, path, v); this.requestRender(); },
+  set(path, v) { setPath(this.params, path, v); if (this.state.sliding) perf.dragInput(); this.requestRender(); },
   // The camera's built-in lens correction for the open photo (src/lens.js), or null.
   lensProfile() { return this.images[this.cur]?.lensProfile || null; },
 
@@ -625,7 +625,7 @@ const app = {
         E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, scissor: [half, 0, cw - half, ch] });
         E.blitBefore([0, 0, half, ch]);
       }
-    } else E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, draft: draftFactor(t.sliding, d, this._interval) });
+    } else E.render(p, { ...v, clip: t.clip, spots: t.tool === 'retouch' && retouchState.spots ? retouchState.spotLevel / 100 : 0, overlayId, draft: draftFactor(t.sliding, d, this._interval), fast: !!t.sliding });
     this.drawOverlay();
     this.updateHud();
     this.scheduleHisto();
@@ -752,8 +752,8 @@ const cropOverlay = new CropOverlay(app);
 const maskOverlay = new MaskOverlay(app);
 const retouchOverlay = new RetouchOverlay(app);
 const warpOverlay = new WarpOverlay(app);
-sliderHooks.start = () => { app.state.sliding = true; lensQuality.draft = !!(app.params && (refocusActive(app.params) || lensActive(app.params))); };
-sliderHooks.end = () => { app.state.sliding = false; lastSlide = performance.now(); lensQuality.draft = false; app.requestRender(); };
+sliderHooks.start = () => { app.state.sliding = true; perf.dragStart(); lensQuality.draft = !!(app.params && (refocusActive(app.params) || lensActive(app.params))); };
+sliderHooks.end = () => { app.state.sliding = false; perf.dragEnd(); lastSlide = performance.now(); lensQuality.draft = false; app.requestRender(); };
 
 // ================================================================== library (catalog-backed)
 
@@ -1697,6 +1697,12 @@ function developRaw(e, { now = false } = {}) {
       // The full develop skips the small preview (half a second); the half-size one's is the same.
       if (!lin.preview) lin.preview = e.linear?.preview;
       if (!lin.preview) { done(); return; }   // reopened meanwhile: the next full develop brings its own
+      // A full-size develop that arrives mid-drag waits until the slider rests: uploading it (hundreds of
+      // MB to the GPU) would stall the drag.
+      if (!small) {
+        while (app.images[app.cur] === e && (app.state.sliding || performance.now() - lastSlide < 400)) await new Promise((r) => setTimeout(r, 150));
+        if (app.images[app.cur] !== e) { done(); return; }
+      }
       e.linear = lin;
       await applySource(e);
       app.requestRender();
@@ -1740,12 +1746,22 @@ function prefetchNeighbours() {
     if (!cur || prefetching) return;
     if (app.state.sliding || performance.now() - lastSlide < EDIT_QUIET || (cur.raw && !cur.linear && !cur.rawError) || cur.fullBusy) { prefetchNeighbours(); return; }
     for (const n of [app.images[app.cur + 1], app.images[app.cur - 1]]) {
-      if (!n || n.linear || developed.has(n.id) || n.offline || n.linked || n.rawError) continue;
+      if (!n || n.linear || developed.has(n.id) || n.offline || n.linked || n.rawError || n.ahead === aheadVersion()) continue;
       if (!RAW_EXT.has((n.name || '').split('.').pop().toLowerCase())) continue;
       prefetching = true;
       try {
         const f = await originalFile(n);
         if (!f || app.images[app.cur] !== cur) return;
+        // Desktop app: into the native disk cache only, nothing sent to this window (which would cost
+        // the editing in front of it a moment); opening it reads it from there.
+        const t0 = performance.now();
+        const stored = await developAhead(f, prefs.rawQuality);
+        if (stored !== null) {
+          perf.mark('prefetched', { ms: Math.round(performance.now() - t0), native: true, stored });
+          n.ahead = aheadVersion();
+          catalog.updatePhoto(n.id, { ahead: n.ahead }).catch(() => {});
+          continue;
+        }
         const lin = await decodeRawLinear(await readable(f), { quality: prefs.rawQuality, half: 1, background: true });
         if (!n.linear && app.images[app.cur] !== n) {
           n.raw = true;
