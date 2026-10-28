@@ -15,9 +15,9 @@ use objc2::{define_class, msg_send, AllocAnyThread, MainThreadMarker, MainThread
 use objc2_core_graphics::CGImage;
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSNumber, NSString, NSURL};
 use objc2_image_capture_core::{
-    ICCameraDevice, ICCameraDeviceCanTakePicture, ICCameraDeviceDelegate, ICCameraFile, ICCameraItem, ICDevice,
-    ICDeviceBrowser, ICDeviceBrowserDelegate, ICDeviceDelegate, ICDeviceLocationTypeMask, ICDeviceTypeMask,
-    ICDownloadOption, ICDownloadsDirectoryURL, ICOverwrite,
+    ICCameraDevice, ICCameraDeviceCanTakePicture, ICCameraDeviceDelegate, ICCameraDeviceDownloadDelegate, ICCameraFile,
+    ICCameraItem, ICDevice, ICDeviceBrowser, ICDeviceBrowserDelegate, ICDeviceDelegate, ICDeviceLocationTypeMask,
+    ICDeviceTypeMask, ICDownloadOption, ICDownloadsDirectoryURL, ICOverwrite, ICSavedFilename,
 };
 
 use super::{emit, Camera, Event};
@@ -47,6 +47,19 @@ fn id_of(d: &ICDevice) -> String {
 
 fn name_of(d: &ICDevice) -> String {
     unsafe { d.name() }.map(|s| s.to_string()).unwrap_or_else(|| "Camera".into())
+}
+
+// Objective-C exceptions (a call the system doesn't support, a camera in a strange state) become an
+// error in the Tether bar: the release build ends the app on anything that unwinds.
+fn guarded<R>(what: &str, f: impl FnOnce() -> R) -> Option<R> {
+    match objc2::exception::catch(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            let why = e.map(|e| format!("{e:?}")).unwrap_or_default();
+            emit(handle(), Event::Error { message: format!("The camera system refused to {what}. {why}") });
+            None
+        }
+    }
 }
 
 fn send_cameras() {
@@ -132,7 +145,7 @@ define_class!(
         fn did_add_items(&self, camera: &ICCameraDevice, items: &NSArray<ICCameraItem>) {
             let ready = STATE.with_borrow(|s| s.as_ref().is_some_and(|s| s.ready && s.active.as_ref().is_some_and(|a| id_of(a) == id_of(camera))));
             if ready {
-                new_photos(items);
+                new_photos(camera, items);
             }
         }
 
@@ -188,6 +201,24 @@ define_class!(
             false
         }
     }
+
+    unsafe impl ICCameraDeviceDownloadDelegate for Delegate {
+        // A download finished: the file is in the folder under the name in ICSavedFilename.
+        #[unsafe(method(didDownloadFile:error:options:contextInfo:))]
+        fn did_download(&self, file: &ICCameraFile, error: Option<&NSError>, options: &NSDictionary<NSString, AnyObject>, _context: *mut std::ffi::c_void) {
+            if let Some(e) = error {
+                let name = unsafe { file.name() }.map(|n| n.to_string()).unwrap_or_default();
+                return emit(handle(), Event::Error { message: format!("{name} couldn’t be saved: {}", e.localizedDescription()) });
+            }
+            let saved = options.objectForKey(unsafe { ICSavedFilename }).and_then(|v| v.downcast::<NSString>().ok()).map(|n| n.to_string());
+            let name = saved.or_else(|| unsafe { file.name() }.map(|n| n.to_string()));
+            match (super::folder(handle()), name) {
+                (Ok(dir), Some(name)) => super::arrived(handle(), dir.join(name)),
+                (Err(e), _) => emit(handle(), Event::Error { message: e }),
+                _ => {}
+            }
+        }
+    }
 );
 
 impl Delegate {
@@ -227,7 +258,8 @@ fn ext(name: &str) -> String {
 }
 
 // New shots: each downloaded into the folder. RAW + JPEG pairs bring only the RAW.
-fn new_photos(items: &NSArray<ICCameraItem>) {
+fn new_photos(camera: &ICCameraDevice, items: &NSArray<ICCameraItem>) {
+    let Some(delegate) = STATE.with_borrow(|s| s.as_ref().map(|s| s.delegate.clone())) else { return };
     let files: Vec<Retained<ICCameraFile>> = items.iter().filter_map(|i| i.downcast::<ICCameraFile>().ok()).collect();
     let names: Vec<String> = files.iter().map(|f| unsafe { f.name() }.map(|n| n.to_string()).unwrap_or_default()).collect();
     let stem = |n: &str| n.rsplit_once('.').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
@@ -247,16 +279,16 @@ fn new_photos(items: &NSArray<ICCameraItem>) {
         let no = NSNumber::new_bool(false);
         let values: [&AnyObject; 2] = [(*dir).as_ref(), (*no).as_ref()];
         let options = NSDictionary::from_slices(&keys, &values);
-        let folder = folder.clone();
-        let block = block2::RcBlock::new(move |saved: *mut NSString, error: *mut NSError| {
-            // Called on an ImageCaptureCore queue: the app handle is fine from any thread.
-            if let Some(e) = unsafe { error.as_ref() } {
-                emit(handle(), Event::Error { message: format!("A photo couldn’t be saved: {}", e.localizedDescription()) });
-            } else if let Some(saved) = unsafe { saved.as_ref() } {
-                super::arrived(handle(), folder.join(saved.to_string()));
-            }
+        // The long-standing macOS download call; the delegate hears when it's done (did_download).
+        guarded("save the photo", || unsafe {
+            camera.requestDownloadFile_options_downloadDelegate_didDownloadSelector_contextInfo(
+                file,
+                &options,
+                ProtocolObject::from_ref(&*delegate),
+                objc2::sel!(didDownloadFile:error:options:contextInfo:),
+                std::ptr::null_mut(),
+            )
         });
-        unsafe { file.requestDownloadWithOptions_completion(Some(&options), &block) };
     }
 }
 
@@ -271,18 +303,18 @@ pub fn start(app: &tauri::AppHandle) -> Result<(), String> {
             send_cameras();
             return;
         }
+        // No authorization request: that call exists on iPhone and iPad only (on a Mac it throws).
         let delegate = Delegate::new(mtm);
-        let browser = unsafe { ICDeviceBrowser::init(ICDeviceBrowser::alloc()) };
-        unsafe {
+        let Some(browser) = guarded("look for cameras", || unsafe {
+            let browser = ICDeviceBrowser::init(ICDeviceBrowser::alloc());
             browser.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
             browser.setBrowsedDeviceTypeMask(ICDeviceTypeMask(ICDeviceTypeMask::Camera.0 | ICDeviceLocationTypeMask::Local.0));
-        }
+            browser
+        }) else {
+            return;
+        };
         STATE.with_borrow_mut(|s| *s = Some(State { browser: browser.clone(), delegate, cameras: Vec::new(), active: None, ready: false }));
-        // macOS asks once whether Rembrandt may control cameras; browsing starts either way.
-        let b = browser.clone();
-        let done = block2::RcBlock::new(move |_status: std::ptr::NonNull<NSString>| {});
-        unsafe { b.requestControlAuthorizationWithCompletion(&done) };
-        unsafe { browser.start() };
+        guarded("look for cameras", || unsafe { browser.start() });
         send_cameras();
     })
 }
@@ -301,7 +333,7 @@ pub fn connect(app: &tauri::AppHandle, id: String) -> Result<(), String> {
             Some(cam)
         });
         if let Some(old) = old {
-            unsafe { old.requestCloseSession() };
+            guarded("close the camera", || unsafe { old.requestCloseSession() });
         }
         match found {
             Some(cam) if unsafe { cam.hasOpenSession() } => {
@@ -309,7 +341,9 @@ pub fn connect(app: &tauri::AppHandle, id: String) -> Result<(), String> {
                 STATE.with_borrow_mut(|s| if let Some(s) = s { s.ready = true });
                 emit(handle(), Event::Connected { id: id_of(&cam), name: name_of(&cam), can_capture });
             }
-            Some(cam) => unsafe { cam.requestOpenSession() },
+            Some(cam) => {
+                guarded("connect to the camera", || unsafe { cam.requestOpenSession() });
+            }
             None => emit(handle(), Event::Error { message: "That camera isn’t connected any more".into() }),
         }
     })
@@ -319,7 +353,9 @@ pub fn capture(app: &tauri::AppHandle) -> Result<(), String> {
     on_main(app, |_| {
         let cam = STATE.with_borrow(|s| s.as_ref().and_then(|s| if s.ready { s.active.clone() } else { None }));
         match cam {
-            Some(cam) => unsafe { cam.requestTakePicture() },
+            Some(cam) => {
+                guarded("take a photo", || unsafe { cam.requestTakePicture() });
+            }
             None => emit(handle(), Event::Error { message: "Connect a camera first".into() }),
         }
     })
@@ -333,7 +369,7 @@ pub fn disconnect(app: &tauri::AppHandle) -> Result<(), String> {
             s.active.take()
         });
         if let Some(cam) = cam {
-            unsafe { cam.requestCloseSession() };
+            guarded("close the camera", || unsafe { cam.requestCloseSession() });
             emit(handle(), Event::Disconnected { id: id_of(&cam), reason: None });
         }
     })
