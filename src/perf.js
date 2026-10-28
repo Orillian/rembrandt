@@ -77,6 +77,26 @@ function gpuStages(app) {
   };
 }
 
+// The main colour stage on this computer's native GPU API (desktop app) and in the web view's WebGL,
+// same size and settings: does a native renderer pay here? Run when the report is made.
+const BENCH = { exposure: 0.3, shadows: 30, highlights: -40, clarity: 20, temp: 10, vibrance: 20, saturation: 5,
+  hsl: { hue: [10, 0, 0, -10, 0, 5, 0, 0], sat: [0, 10, 0, 0, -10, 0, 0, 0], lum: [0, 0, 5, 0, 0, -5, 0, 0] },
+  grading: { shadows: { h: 220, s: 20, l: 0 }, midtones: { h: 30, s: 0, l: 0 }, highlights: { h: 45, s: 15, l: 0 }, global: { h: 30, s: 0, l: 0 }, blending: 50, balance: 0 } };
+export async function nativeBenchmark(app) {
+  const t = globalThis.__TAURI_INTERNALS__, E = app.engine;
+  if (!t || !E?.gl) return null;
+  const [{ MAIN_WGSL, mainParams }, { mainUniforms }, { defaultParams }, { deepMerge }] = await Promise.all([
+    import('../engine/src/wgsl-main.js'), import('../engine/src/pipeline.js'), import('./params.js'), import('./util.js')]);
+  const p = deepMerge(defaultParams(1.5), BENCH);
+  const [w, h] = E.L ? [E.L.w, E.L.h] : [2560, 1707];
+  const frames = 10;
+  const webgl = Math.round(E.benchmarkMain(p, w, h, frames) * 100) / 100;
+  try {
+    const native = await t.invoke('gpu_benchmark', { w, h, frames, wgsl: MAIN_WGSL, params: Array.from(mainParams({ ...mainUniforms(p), uGuideOn: 1 })) });
+    return { w, h, webglMs: webgl, nativeMs: native.ms, speedup: native.ms > 0 ? Math.round((webgl / native.ms) * 100) / 100 : null, adapter: native.adapter, backend: native.backend };
+  } catch (err) { return { w, h, webglMs: webgl, nativeError: String(err?.message || err) }; }
+}
+
 export function report(app) {
   const gl = app.engine?.gl;
   let gpu = '';
@@ -108,7 +128,9 @@ export function report(app) {
 }
 
 export async function copyReport(app) {
-  const text = JSON.stringify(report(app), null, 1);
+  const r = report(app);
+  try { r.nativeGpu = await nativeBenchmark(app); } catch (err) { r.nativeGpu = String(err?.message || err); }
+  const text = JSON.stringify(r, null, 1);
   try { await navigator.clipboard.writeText(text); app.toast('Performance report copied. Paste it into an issue or a message.'); }
   catch { console.info(text); app.toast('Couldn’t copy the report; it is in the developer console'); }
 }

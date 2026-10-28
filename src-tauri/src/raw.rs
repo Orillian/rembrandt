@@ -135,7 +135,7 @@ fn color() -> &'static Color {
 }
 
 // Same rounding as floatToHalf in src/raw-worker.js.
-fn float_to_half(v: f32) -> u16 {
+pub(crate) fn float_to_half(v: f32) -> u16 {
     let x = v.to_bits();
     let sign = (x >> 16) & 0x8000;
     let exp = ((x >> 23) & 0xff) as i32 - 127 + 15;

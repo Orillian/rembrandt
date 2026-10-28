@@ -226,6 +226,35 @@ export class Engine {
     return ms / ((w * h) / 1e6);
   }
 
+  // The main colour stage with settings `p` at w × h, timed as the GPU benchmark's native version
+  // (src-tauri/src/gpubench.rs) is: the same noise input, `frames` draws, then a wait for the GPU.
+  // Milliseconds per frame.
+  benchmarkMain(p, w, h, frames = 10) {
+    const gl = this.gl, px = new Float32Array(4);
+    const noise = (seed) => {
+      let s = Math.max(1, Math.imul(seed, 2654435761) >>> 0);
+      const a = new Float32Array(w * h * 4);
+      for (let i = 0; i < a.length; i++) { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; a[i] = (s % 1600) / 1000; }
+      const t = this.texture(w, h, gl.RGBA16F, false);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.FLOAT, a);
+      return t;
+    };
+    const pre = noise(1), guide = noise(2), t = this.target(w, h);
+    const u = { ...mainUniforms(p), uGuideOn: 1, uPre: pre, uGuideAB: guide, uTexel: [1 / w, 1 / h] };
+    const sync = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px); };
+    try {
+      this.draw(this.P.main, u, t); sync();   // compile and warm up
+      const t0 = performance.now();
+      for (let i = 0; i < frames; i++) this.draw(this.P.main, u, t);
+      sync();
+      return (performance.now() - t0) / frames;
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.free(t); gl.deleteTexture(pre); gl.deleteTexture(guide);
+    }
+  }
+
   levelSize(kind) {
     const long = Math.max(this.fullW, this.fullH);
     const prev = Math.min(this.maxTex, this.previewLong || PREVIEW_LONG);

@@ -10,6 +10,8 @@ mod credentials;
 #[cfg(desktop)]
 mod devcache;
 #[cfg(desktop)]
+mod gpubench;
+#[cfg(desktop)]
 mod pixels;
 #[cfg(desktop)]
 mod raw;
@@ -210,6 +212,15 @@ fn queue_open(app: &tauri::AppHandle, paths: impl IntoIterator<Item = PathBuf>) 
 #[cfg(desktop)]
 fn arg_paths(argv: impl IntoIterator<Item = String>) -> Vec<PathBuf> {
     argv.into_iter().filter(|a| !a.starts_with('-') && !a.contains("://")).map(PathBuf::from).collect()
+}
+
+/// The GPU benchmark (gpubench.rs): `wgsl` is the main colour stage, `params` its settings.
+#[cfg(desktop)]
+#[tauri::command]
+async fn gpu_benchmark(w: u32, h: u32, frames: u32, wgsl: String, params: Vec<f32>) -> Result<gpubench::Result, String> {
+    tauri::async_runtime::spawn_blocking(move || gpubench::run(w.clamp(64, 8192), h.clamp(64, 8192), frames.clamp(1, 60), &wgsl, &params))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Develops a RAW file in native code (see raw.rs). The body is the file; headers carry the options:
@@ -788,6 +799,8 @@ pub fn run() {
             write_export, stage_export, open_in_photos, update_check, update_install, update_progress, take_opened, open_paths,
             #[cfg(desktop)]
             raw_decode,
+            #[cfg(desktop)]
+            gpu_benchmark,
             #[cfg(desktop)]
             pixels_server
         ])
