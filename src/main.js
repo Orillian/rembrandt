@@ -904,6 +904,8 @@ const dirOf = (rel) => rel.slice(0, rel.lastIndexOf('/') + 1);
 
 // Files chosen, dropped or downloaded. XMP sidecars among them are matched to their photos;
 // `opts.adobe` also reads edits saved inside the files, and `opts.catalog` applies a Lightroom catalog.
+// `opts.editor`: the first photo opens in the editor even from the library (Open With, another app's
+// "Edit in…"), also when it is in the library already.
 async function openFiles(files, opts = {}) {
   const all = [...files];
   const side = new Map();
@@ -921,7 +923,7 @@ async function openFiles(files, opts = {}) {
     if (all.length) app.toast(all.some(isXmp) ? 'Choose the photos together with their .xmp files' : 'No photos found');
     return [];
   }
-  return importItems(items, { open: true, catalog: opts.catalog });
+  return importItems(items, { open: true, catalog: opts.catalog, editor: !!opts.editor });
 }
 
 // Develop settings that come with an imported photo: Lightroom catalog, XMP sidecar, or XMP inside the file.
@@ -984,7 +986,8 @@ async function importItems(items, opts = {}) {
   const many = items.length > 1;
   // Going to the editor: the first photo opens as soon as its preview is decoded, while it is still
   // being stored and the rest come in (storing a 25 MB RAW alone takes a second or two).
-  const toEditor = opts.open && !(app.view.mode === 'library' || opts.label || items.length > 20);
+  const toLibrary = !opts.editor && (app.view.mode === 'library' || opts.label || items.length > 20);
+  const toEditor = opts.open && !toLibrary;
   let openedEarly = null;
   const job = many && opts.progress !== false ? beginProgress((opts.label || 'Importing').replace(/:$/, '')) : null;
   for (let n = 0; n < items.length; n++) {
@@ -1094,7 +1097,7 @@ async function importItems(items, opts = {}) {
   const bad = failed.length === 1 ? `${failed[0].name} couldn't be opened: ${failed[0].why}`
     : failed.length ? `${failed.length} files couldn't be opened (${failed.slice(0, 3).map((f) => f.name).join(', ')}${failed.length > 3 ? ', …' : ''})` : '';
   if (first && opts.open) {
-    if (app.view.mode === 'library' || opts.label || items.length > 20) {
+    if (toLibrary) {
       if (app.view.mode !== 'library') setMode('library');
       const msg = `Imported ${fresh} photo${fresh === 1 ? '' : 's'}${collections.size ? ` and ${collections.size} album${collections.size === 1 ? '' : 's'}` : ''}`;
       if (bad) app.toast(`${msg} · ${bad}`, { ms: 8000 }); else progress(msg, true);
@@ -3177,7 +3180,7 @@ async function openDroppedLinks(list) {
   openFromDisk(await t.invoke('open_paths', { paths }).catch(() => []));
 }
 // Photos on disk (from the desktop app) → the same import as files dropped from Finder or Explorer.
-async function openFromDisk(entries) {
+async function openFromDisk(entries, opts = {}) {
   const t = window.__TAURI_INTERNALS__;
   if (!t || !entries?.length) return;
   const files = [];
@@ -3185,7 +3188,7 @@ async function openFromDisk(entries) {
     const buf = (await readNativeFile(e.path)) || (await t.invoke('read_file', { path: e.path }).catch(() => null));
     if (buf) files.push(new File([buf], e.name, { lastModified: e.modified || Date.now() }));
   }
-  if (files.length) openFiles(files);
+  if (files.length) openFiles(files, opts);
   else app.toast('Couldn’t read those photos');
 }
 // Desktop: photos the app was asked to open (Open With, the Dock icon, another app's "Edit in…").
@@ -3196,7 +3199,7 @@ function watchOpenedFiles() {
   const check = async () => {
     if (busy) return;
     busy = true;
-    try { await openFromDisk(await t.invoke('take_opened')); } catch { /* an older app without the command */ } finally { busy = false; }
+    try { await openFromDisk(await t.invoke('take_opened'), { editor: true }); } catch { /* an older app without the command */ } finally { busy = false; }
   };
   setInterval(check, 1000);
   window.addEventListener('focus', check);
