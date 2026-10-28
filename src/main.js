@@ -110,7 +110,19 @@ const canvas = $('gl');
 const overlay = $('overlay');
 
 let pendingSave = null;
-const saveSoon = debounce(() => flushSave(), 400);
+// Work that may stall a drag, marked for the performance report's freeze log (perf.begin).
+function tracked(name, fn) {
+  return function (...a) {
+    const end = perf.begin(name);
+    try {
+      const r = fn.apply(this, a);
+      if (r && typeof r.then === 'function') return r.finally(end);
+      end();
+      return r;
+    } catch (err) { end(); throw err; }
+  };
+}
+const saveSoon = debounce(tracked('save', () => flushSave()), 400);
 function flushSave() {
   saveSoon.cancel();
   const job = pendingSave;
@@ -670,8 +682,10 @@ const app = {
 
   // One small render per edit feeds the histogram and the navigator (same size, so the engine reuses
   // its readback target).
-  scheduleHisto: debounce(async function histo() {
-    if (!app.img || !app.engine.L) return;
+  scheduleHisto: debounce(tracked('histogram', async function histo() {
+    // Not during a drag: its extra render and read-back stalled drags whenever the hand paused (the
+    // performance report's freeze log). The end of the drag renders again, which brings it here.
+    if (!app.img || !app.engine.L || app.state.sliding) return;
     // Read back without stalling the GPU; a newer edit meanwhile makes this one give way to it.
     const small = await app.renderSmallAsync(app.renderParams(), SMALL);
     if (!small || !app.img) return;
@@ -683,7 +697,7 @@ const app = {
     $('clipHi').classList.toggle('hot', app.hist.clipHi);
     $('clipLo').classList.toggle('hot', app.hist.clipLo);
     if (app.state.tool === 'edit' && app.panel && !app.state.sliding) app.panel.refreshCurve?.();
-  }, 90),
+  }), 90),
 
   async renderSmallAsync(params, long) {
     if (!this.img || !this.engine.L) return null;
@@ -752,6 +766,7 @@ const cropOverlay = new CropOverlay(app);
 const maskOverlay = new MaskOverlay(app);
 const retouchOverlay = new RetouchOverlay(app);
 const warpOverlay = new WarpOverlay(app);
+app.renderNow = tracked('frame', app.renderNow);
 sliderHooks.start = () => { app.state.sliding = true; perf.dragStart(); lensQuality.draft = !!(app.params && (refocusActive(app.params) || lensActive(app.params))); };
 sliderHooks.end = () => { app.state.sliding = false; perf.dragEnd(); lastSlide = performance.now(); lensQuality.draft = false; app.requestRender(); };
 
@@ -763,7 +778,7 @@ const thumbURL = (e, blob) => {
 };
 
 // Saves an edited thumbnail for the current photo (used by the library grid and filmstrip).
-const saveThumb = debounce(async () => {
+const saveThumb = debounce(tracked('thumbnail', async () => {
   const e = app.images[app.cur];
   if (!e || !app.img || app.preview || app.state.before) return;
   const img = app.renderSmall(app.params, 480);
@@ -785,7 +800,7 @@ const saveThumb = debounce(async () => {
     cloud.pushPhoto(e, e.cloudThumb);
   }
   refreshLibrary();
-}, 900);
+}), 900);
 
 async function thumbFromBitmap(bitmap) {
   const t = thumbnail(bitmap, 360);
@@ -1590,6 +1605,10 @@ function describe(e, w, h) {
 // Points the engine at the best source we have for `e`: developed RAW data if available,
 // otherwise the decoded bitmap (JPEG/PNG/…, or a RAW's embedded preview).
 async function applySource(e) {
+  const end = perf.begin('upload');
+  try { return await applySourceNow(e); } finally { end(); }
+}
+async function applySourceNow(e) {
   const lin = e.linear;
   const w = lin ? lin.w : e.bitmap.width, h = lin ? lin.h : e.bitmap.height;
   e.sample = lin ? { data: lin.preview.data, w: lin.preview.w, h: lin.preview.h } : e.sample || sampleData(e.bitmap);
@@ -1647,17 +1666,19 @@ const FULL_AFTER = 1500, EDIT_QUIET = 2000;
 // Draft frames: while a slider moves, the photo renders at a lower resolution (sharp again the moment
 // it is let go), as Lightroom and Capture One do, but only on computers where full-resolution frames
 // can't keep up: once the median time between frames in a drag goes over DRAFT_SLOW ms (fewer than
-// about 45 frames a second; a pause of over a second isn't a frame), drafts stay on for the rest of
-// the session, so drags don't flip between sharp-but-slow and smooth.
-const DRAFT_SLOW = 22;
-const draft = { on: false, gaps: [] };
+// about 45 frames a second; a pause of over a second isn't a frame), drafts stay on, so drags don't
+// flip between sharp-but-slow and smooth. A drag at least DRAFT_RETRY ms after they came on tries full
+// resolution again: the computer may have got faster since (Low Power Mode off, plugged in).
+const DRAFT_SLOW = 22, DRAFT_RETRY = 30000;
+const draft = { on: false, gaps: [], since: 0 };
 const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
 function draftFactor(sliding, dpr, interval) {
   if (!sliding) { draft.gaps = []; return 0; }
+  if (!draft.gaps.length && draft.on && performance.now() - draft.since > DRAFT_RETRY) { draft.on = false; perf.mark('draft-retry'); }
   if (interval > 0 && interval < 1000) {
     draft.gaps.push(interval);
     if (draft.gaps.length > 8) draft.gaps.shift();
-    if (!draft.on && draft.gaps.length >= 6 && median(draft.gaps) > DRAFT_SLOW) { draft.on = true; perf.mark('draft-on', { median: Math.round(median(draft.gaps)) }); }
+    if (!draft.on && draft.gaps.length >= 6 && median(draft.gaps) > DRAFT_SLOW) { draft.on = true; draft.since = performance.now(); perf.mark('draft-on', { median: Math.round(median(draft.gaps)) }); }
   }
   return draft.on ? (dpr >= 2 ? 0.5 : 0.7) : 0;
 }
@@ -1755,7 +1776,8 @@ function prefetchNeighbours() {
         // Desktop app: into the native disk cache only, nothing sent to this window (which would cost
         // the editing in front of it a moment); opening it reads it from there.
         const t0 = performance.now();
-        const stored = await developAhead(f, prefs.rawQuality);
+        const endPrefetch = perf.begin('prefetch');
+        const stored = await developAhead(f, prefs.rawQuality).finally(endPrefetch);
         if (stored !== null) {
           perf.mark('prefetched', { ms: Math.round(performance.now() - t0), native: true, stored });
           n.ahead = aheadVersion();
@@ -1810,7 +1832,8 @@ async function runAhead() {
       const f = await originalFile(e).catch(() => null);
       if (!f) continue;
       const t0 = performance.now();
-      const ok = await developAhead(f, prefs.rawQuality);
+      const endAhead = perf.begin('develop-ahead');
+      const ok = await developAhead(f, prefs.rawQuality).finally(endAhead);
       if (ok === null) { ahead.queue = []; ahead.queued.clear(); break; }   // no native side here
       perf.mark('ahead', { ms: Math.round(performance.now() - t0), ok });
       e.ahead = aheadVersion();

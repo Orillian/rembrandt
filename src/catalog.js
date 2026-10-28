@@ -1,6 +1,7 @@
 // Photo catalog persisted on this device (IndexedDB): photo records, original files and thumbnails.
 // Original files are stored when the browser allows it; if storage is full the record is kept and the
 // photo is marked "offline" until it is imported again.
+import { begin } from './perf.js';
 
 const DB_NAME = 'lumen-catalog';
 const VERSION = 2;
@@ -76,6 +77,10 @@ export function updatePhoto(id, patch) {
   return written;
 }
 async function flushUpdates() {
+  const end = begin('catalog');
+  try { await flushUpdatesNow(); } finally { end(); }
+}
+async function flushUpdatesNow() {
   const batch = pending;
   pending = null;
   const d = await db();

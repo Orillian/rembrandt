@@ -27,13 +27,33 @@ export function frame(cpuMs, sliding) {
 // app's doing; frames offered only every 33 ms, the system's (Low Power Mode, for one).
 const rafGaps = [], inputGaps = [];
 let probing = false, lastInput = 0;
+
+// Freezes during drags: a frame offered over 50 ms after the last one (the frame timer runs on while
+// the slider is held still, so a pause of the hand isn't one), with the app's work that was running
+// then (`begin` / its end marks the spans of likely culprits). Nothing running: the GPU or the system.
+const spans = [], stalls = [];
+export function begin(name) {
+  const s = { name, t0: performance.now(), t1: 0 };
+  spans.push(s);
+  if (spans.length > 200) spans.shift();
+  return () => { s.t1 = performance.now(); };
+}
+function stall(t, gap) {
+  const during = spans.filter((s) => s.t0 <= t && (!s.t1 || s.t1 >= t - gap) && (!s.t1 || s.t1 - s.t0 >= 2))
+    .map((s) => `${s.name} ${Math.round((s.t1 || t) - s.t0)}ms`);
+  stalls.push({ t: Math.round(t), gap: Math.round(gap), during: [...new Set(during)] });
+  if (stalls.length > 30) stalls.shift();
+}
 export function dragStart() {
   if (probing) return;
   probing = true;
   let last = 0;
   const tick = (t) => {
     if (!probing) return;
-    if (last && t - last < 500) { rafGaps.push(t - last); if (rafGaps.length > 600) rafGaps.shift(); }
+    if (last && t - last < 2000) {
+      rafGaps.push(t - last); if (rafGaps.length > 600) rafGaps.shift();
+      if (t - last > 50) stall(t, t - last);
+    }
     last = t;
     requestAnimationFrame(tick);
   };
@@ -146,8 +166,10 @@ export function report(app) {
       cpuMedian: pct(frames.map((f) => f[1]), 0.5),
       cpuP95: pct(frames.map((f) => f[1]), 0.95),
       rafMedian: pct(rafGaps, 0.5),
+      rafP95: pct(rafGaps, 0.95),
       inputMedian: pct(inputGaps, 0.5),
     } : null,
+    stalls,
     gpuStages: (() => { try { return gpuStages(app); } catch (e) { return String(e); } })(),
     events,
   };
