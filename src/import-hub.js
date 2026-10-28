@@ -100,6 +100,10 @@ export function openImport(app, api, page = 'home') {
         el('b', {}, 'Sync a folder'),
         el('span', {}, sync ? 'Photos stay in the folder; new ones appear automatically.' : 'Needs the desktop app, or Chrome or Edge.')),
       icon('chevron'));
+    const tether = api.tether ? el('button', { class: 'src-card', type: 'button', onclick: () => { close(); api.tether(); } },
+      el('span', { class: 'src-logo big' }, icon('camera')),
+      el('span', { class: 'src-text' }, el('b', {}, 'Tethered shooting'), el('span', {}, 'Shoot with your camera on a USB cable: each photo opens as you take it.')),
+      icon('chevron')) : null;
     const lr = el('button', { class: 'src-card', type: 'button', onclick: () => show('lightroom') },
       el('span', { class: 'src-logo big lr' }, icon('sliders')),
       el('span', { class: 'src-text' }, el('b', {}, 'Adobe Lightroom'), el('span', {}, 'Photos, edits, ratings and collections.')),
@@ -115,7 +119,7 @@ export function openImport(app, api, page = 'home') {
           el('p', { class: 'src-note' }, 'Linked photos stay in Google Photos, Drive, Dropbox or OneDrive. Rembrandt keeps your edits and a small preview.')),
         el('div', { class: 'imp-section' },
           el('div', { class: 'imp-label' }, el('span', {}, 'More ways')),
-          el('div', { class: 'imp-more' }, isMobileApp ? null : syncCard, lr)),
+          el('div', { class: 'imp-more' }, isMobileApp ? null : syncCard, tether, lr)),
         status),
     ];
   }

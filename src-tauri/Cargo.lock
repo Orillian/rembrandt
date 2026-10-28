@@ -1392,7 +1392,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -3018,10 +3018,16 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 name = "lumen"
 version = "0.3.30"
 dependencies = [
+ "block2",
  "c2pa",
  "cc",
  "getrandom 0.3.4",
  "jpeg-decoder",
+ "libloading 0.8.9",
+ "objc2",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-image-capture-core",
  "pollster",
  "rcgen",
  "reqwest 0.12.28",
@@ -3443,6 +3449,20 @@ dependencies = [
  "libc",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-image-capture-core"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b153f2757b48c47daa739a4c8f27ec2912ddbfe5cb6fd28738ec5d6e1a0e83a"
+dependencies = [
+ "block2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
 ]
 
 [[package]]

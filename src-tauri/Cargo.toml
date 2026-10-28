@@ -39,8 +39,18 @@ wgpu = "=30.0.1"
 pollster = "0.4"
 
 # The system web view on Linux: its graphics acceleration is set explicitly (see lib.rs).
+# libloading: libgphoto2 for tethering, opened when tethering starts (src/tether/gphoto.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+libloading = "0.8"
+
+# Tethering on macOS with ImageCaptureCore (src/tether/mac.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL", "NSValue"] }
+objc2-image-capture-core = { version = "0.3", features = ["block2", "objc2-core-graphics", "libc"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGImage"] }
 
 [profile.release]
 codegen-units = 1

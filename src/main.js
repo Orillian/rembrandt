@@ -44,6 +44,7 @@ import * as syncCheck from './sync-check.js';
 import * as sb from './backend/supabase.js';
 import { backendConfigured, CONFIG } from './config.js';
 import * as albums from './albums.js';
+import { openTether, capture as tetherCapture, tethering, tetherSupported } from './tether.js';
 import { A, qToP, pToUV, rotatedBounds, cropUVToQ, fitCrop } from './geometry.js';
 import { buildEditPanel } from './panel-edit.js';
 import { buildCropPanel, CropOverlay, refitCrop } from './tool-crop.js';
@@ -3091,6 +3092,35 @@ const importApi = {
   adobeConnect: () => adobe.adobeSignIn(openExternal()),
   readLightroomCloud: (onProgress) => adobe.readLightroomCloud(onProgress),
   downloadLightroom,
+  tether: tetherSupported() ? () => openTether(tetherApi) : null,
+};
+
+// Tethered shooting (src/tether.js): each photo the camera takes is imported and opened as it lands,
+// then gets the chosen edit and goes into the day's album.
+const tetherApi = {
+  app,
+  async importShot(entry) {
+    const buf = (await readNativeFile(entry.path)) || (await window.__TAURI_INTERNALS__.invoke('read_file', { path: entry.path }));
+    if (!buf) throw new Error('the file couldn’t be read');
+    setMode('edit');
+    const done = await openFiles([new File([buf], entry.name, { lastModified: entry.modified || Date.now() })], { editor: true });
+    return done?.[0] || null;
+  },
+  async applyEdit(photo, mode, previous) {
+    if (mode === 'previous') {
+      if (previous && previous !== photo && app.images.includes(previous)) changeEdits([photo.id], (p, a) => withSettings(p, developSettings(editOf(previous)), a), '');
+    } else if (mode.startsWith('preset:')) {
+      const preset = allPresets().find((x) => x.name === mode.slice(7));
+      if (preset) await applyPresetTo([photo.id], preset, { quiet: true });
+    }
+  },
+  async addToAlbum(photo, name) {
+    const al = albums.allAlbums().find((a) => a.name === name);
+    if (al) await albums.addToAlbum(al.id, [photo.key]); else await albums.createAlbum(name, [photo.key]);
+    refreshLibrary();
+  },
+  presets: () => allPresets(),
+  pickFolder: () => window.__TAURI_INTERNALS__.invoke('pick_folder').catch(() => null),
 };
 
 // Downloads photos from Lightroom (cloud) as Lightroom renders them (edits applied) and imports
@@ -3335,6 +3365,8 @@ window.addEventListener('paste', (e) => {
 window.addEventListener('keydown', (e) => {
   // Hidden: copy the performance report (src/perf.js).
   if ((e.metaKey || e.ctrlKey) && e.altKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); perf.copyReport(app); return; }
+  // Tethered shooting: F12 fires the shutter, as in Lightroom.
+  if (e.key === 'F12' && tethering()) { e.preventDefault(); tetherCapture(); return; }
   const tag = e.target?.tagName;
   if (tag === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
   if (tag === 'TEXTAREA' || document.querySelector('dialog[open]')) return;

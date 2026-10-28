@@ -12,6 +12,8 @@ mod devcache;
 #[cfg(desktop)]
 mod gpubench;
 #[cfg(desktop)]
+mod tether;
+#[cfg(desktop)]
 mod pixels;
 #[cfg(desktop)]
 mod raw;
@@ -54,6 +56,21 @@ struct Entry {
 #[cfg(desktop)]
 pub(crate) fn readable_path(app: &tauri::AppHandle, p: &Path) -> Result<PathBuf, String> {
     allowed(&app.state::<AppState>(), p)
+}
+
+/// Tethering: the folder photos are saved into may be read, and each photo that lands there is a photo
+/// the web app may open (its entry, or None if it isn't a photo).
+#[cfg(desktop)]
+pub(crate) fn allow_root(app: &tauri::AppHandle, p: &Path) {
+    let state = app.state::<AppState>();
+    let mut roots = state.roots.lock().unwrap();
+    if !roots.iter().any(|r| r == p) {
+        roots.push(p.to_path_buf());
+    }
+}
+#[cfg(desktop)]
+pub(crate) fn allow_photo(app: &tauri::AppHandle, p: &Path) -> Option<Entry> {
+    allow_files(&app.state::<AppState>(), [p.to_path_buf()]).first().map(|p| entry(p))
 }
 
 fn allowed(state: &AppState, p: &Path) -> Result<PathBuf, String> {
@@ -801,6 +818,16 @@ pub fn run() {
             raw_decode,
             #[cfg(desktop)]
             gpu_benchmark,
+            #[cfg(desktop)]
+            tether::tether_start,
+            #[cfg(desktop)]
+            tether::tether_connect,
+            #[cfg(desktop)]
+            tether::tether_capture,
+            #[cfg(desktop)]
+            tether::tether_disconnect,
+            #[cfg(desktop)]
+            tether::tether_folder,
             #[cfg(desktop)]
             pixels_server
         ])

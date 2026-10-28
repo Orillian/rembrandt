@@ -1424,3 +1424,75 @@ body.ws-no-studio .nav-ask { display: none; }
 .snap-name:hover { background: var(--line); }
 .snap-rename { flex: 1; min-width: 0; }
 .export-presets select, .export-presets input { flex: 1; min-width: 0; }
+
+/* Tethered shooting: the Tether bar over the bottom of the photo (src/tether.js) */
+.tether { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; display: grid;
+  grid-template-columns: minmax(222px, max-content) auto auto auto; align-items: center; gap: 18px; padding: 10px 10px 10px 16px;
+  background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line-strong);
+  border-radius: var(--r); box-shadow: var(--shadow-pop); max-width: calc(100% - 24px); animation: tether-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.tether[hidden] { display: none; }
+body.has-image .tether { opacity: 0.94; transition: opacity 0.2s; }
+body.has-image .tether:hover, body.has-image .tether:focus-within, body.has-image .tether[data-phase="busy"] { opacity: 1; }
+@keyframes tether-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+.tether-cam { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.tether-glyph { position: relative; flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--raised); color: var(--text-2); }
+.tether-glyph .i { width: 18px; height: 18px; }
+.tether-dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--dim); border: 2px solid var(--panel); }
+.tether[data-phase="looking"] .tether-dot, .tether[data-phase="choose"] .tether-dot { animation: tether-pulse 1.6s ease-in-out infinite; }
+.tether[data-phase="connecting"] .tether-dot { background: var(--warn); animation: tether-pulse 0.9s ease-in-out infinite; }
+.tether[data-phase="ready"] .tether-dot { background: var(--good); }
+.tether[data-phase="ready"] .tether-glyph, .tether[data-phase="busy"] .tether-glyph { color: var(--text); }
+.tether[data-phase="busy"] .tether-dot { background: var(--accent-bg); }
+.tether[data-phase="unavailable"] .tether-dot { background: var(--danger); }
+@keyframes tether-pulse { 50% { opacity: 0.35; } }
+.tether-id { display: grid; gap: 3px; min-width: 0; max-width: 270px; }
+.tether-name { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer;
+  font: 500 15px/1.1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; text-align: left; }
+.tether-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-name:disabled { cursor: default; }
+.tether-name .i { width: 13px; height: 13px; flex: none; color: var(--muted); }
+.tether-sub { font: 10.5px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether[data-phase="unavailable"] { grid-template-columns: minmax(200px, 420px) auto; }
+.tether[data-phase="unavailable"] .tether-sub { white-space: normal; line-height: 1.45; }
+.tether[data-phase="unavailable"] .tether-shutter, .tether[data-phase="unavailable"] .tether-side { display: none; }
+/* The shutter: a ring around a disc, like a camera's release */
+.tether-shutter { position: relative; width: 50px; height: 50px; border-radius: 50%; border: 2px solid var(--text); background: transparent; padding: 0; cursor: pointer;
+  display: grid; place-items: center; transition: border-color 0.15s, opacity 0.15s; }
+.tether-shutter-disc { width: 38px; height: 38px; border-radius: 50%; background: var(--accent-bg); transition: transform 0.12s, background 0.15s; }
+.tether-shutter:hover:not(:disabled) .tether-shutter-disc { background: var(--accent-bg-hover); transform: scale(0.94); }
+.tether-shutter:active:not(:disabled) .tether-shutter-disc { transform: scale(0.84); }
+.tether-shutter:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tether-shutter:disabled { cursor: default; opacity: 0.35; }
+.tether-shutter.busy { opacity: 1; border-color: transparent; }
+.tether-shutter.busy::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--accent-bg); border-right-color: transparent; animation: spin 0.8s linear infinite; }
+.tether-shutter.busy .tether-shutter-disc { transform: scale(0.8); }
+.tether.tether-flash .tether-shutter-disc { animation: tether-flash 0.6s ease-out; }
+@keyframes tether-flash { 0% { background: #fff; box-shadow: 0 0 22px 6px rgba(255, 244, 222, 0.7); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.tether-side { display: flex; gap: 16px; align-items: flex-end; }
+.tether-field { display: grid; gap: 4px; }
+.tether-label { font: 500 9.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.tether-chip { display: inline-flex; align-items: center; gap: 3px; height: 24px; max-width: 170px; padding: 0 6px 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r);
+  background: var(--surface); color: var(--text); font: 500 12px var(--font); cursor: pointer; }
+.tether-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-chip:hover { background: var(--raised-hover); }
+.tether-chip .i { width: 12px; height: 12px; flex: none; color: var(--muted); }
+.tether-count { font: 500 17px/24px var(--mono); font-variant-numeric: tabular-nums; color: var(--text); min-width: 2ch; }
+.tether-tools { display: flex; flex-direction: column; gap: 2px; border-left: 1px solid var(--line); padding-left: 6px; }
+@media (max-width: 760px) { .tether { grid-template-columns: minmax(120px, 1fr) auto auto; gap: 12px; } .tether-side .tether-field:last-child { display: none; } }
+@media (prefers-reduced-motion: reduce) { .tether, .tether-dot, .tether.tether-flash .tether-shutter-disc, .viewer.tether-flash::after { animation: none !important; } }
+
+/* Before the first photo: what to do, in the empty viewer's type */
+.tether-hero { display: none; padding-bottom: 96px; }
+body.tethering:not(.has-image) .tether-hero { display: grid; }
+body.tethering #empty { display: none; }
+.tether-hero-mark { display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 18px; border-radius: 50%; border: 1px solid var(--line-strong); color: var(--accent); }
+.tether-hero-mark .i { width: 28px; height: 28px; }
+.tether-hero p { color: var(--muted); }
+.tether-hero p kbd { margin: 0 2px; }
+.tether-steps { counter-reset: step; list-style: none; margin: 4px auto 0; padding: 0; display: grid; gap: 10px; max-width: 380px; text-align: left; }
+.tether-steps li { counter-increment: step; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: baseline; color: var(--text-2); font-size: 13px; line-height: 1.5; }
+.tether-steps li::before { content: counter(step, decimal-leading-zero); font: 500 11px var(--mono); color: var(--accent); letter-spacing: 0.06em; }
+.tether-hero .btn .i { width: 15px; height: 15px; }
+/* A photo landed: a quick flash over the view */
+.viewer.tether-flash::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; background: #fff8ec; animation: tether-blink 0.5s ease-out forwards; }
+@keyframes tether-blink { from { opacity: 0.38; } to { opacity: 0; } }

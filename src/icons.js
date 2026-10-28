@@ -59,6 +59,7 @@ export const ICON = {
   background: s('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="12" cy="10" r="2.6" fill="currentColor" fill-opacity=".25"/><path d="M7.5 20c.5-2.8 2.2-4.3 4.5-4.3s4 1.5 4.5 4.3" fill="currentColor" fill-opacity=".25"/>'),
   object: s('<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="m9 9 7 2.6-3 1.1-1.1 3z"/>'),
   depth: s('<path d="M3 19h18"/><path d="M5 19 9.5 9l3 5 2.5-4L19 19"/><circle cx="16.5" cy="5.5" r="1.5"/>'),
+  camera: s('<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3.5"/>'),
   aperture: s('<circle cx="12" cy="12" r="9"/><path d="m14.3 3.3-5.8 10M20.5 9h-11.6M18.3 18.3 12.5 8.3M9.7 20.7l5.8-10M3.5 15h11.6M5.7 5.7l5.8 10"/>'),
   focus: s('<circle cx="12" cy="12" r="3"/><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/>'),
   contrast: s('<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>'),
