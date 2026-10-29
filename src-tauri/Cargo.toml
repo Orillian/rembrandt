@@ -36,7 +36,7 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem",
 # GPU benchmark (src/gpubench.rs): the editor's main colour stage on the native GPU API, to compare
 # with the web view's WebGL before building a native renderer.
 wgpu = "=30.0.1"
-pollster = "0.4"
+pollster = "1.0"
 
 # The system web view on Linux: its graphics acceleration is set explicitly (see lib.rs).
 # libloading: libgphoto2 for tethering, opened when tethering starts (src/tether/gphoto.rs).
