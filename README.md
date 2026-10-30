@@ -120,7 +120,8 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Masks**: brush, gradients, colour and tone ranges, AI subject, background, object and depth, and
   People: face skin, body skin, hair, eyebrows, eye whites, irises, lips, teeth and clothes.
 - **Remove**: paint over anything and **Generative Remove** fills it with what was most likely behind it
-  (a small inpainting network that runs on any computer's CPU, no upload). **People in the background**
+  (a small inpainting network, no upload: in the desktop app on every CPU core, and on Apple silicon
+  on the Neural Engine through Core ML). **People in the background**
   finds and removes passers-by in one click and keeps your subject. Heal and Clone copy from a matching
   part of the photo. **Remove blemishes** heals spots on portraits in one click and keeps moles and beauty marks.
   **Visualize spots** shows sensor dust and specks as white on black and **Remove all dust** heals them in one go; **Color speckles** (Detail)
@@ -155,6 +156,12 @@ checks it against the published SHA-256 sums, and restarts the server.
 - **Batch**: copy and paste edits to hundreds of photos, batch export, and presets that fit each
   photo's exposure. Imports Lightroom presets (.xmp, .lrtemplate and zip packs). Watch a folder to
   apply a preset and album to new photos as they arrive.
+- **Point Color** (Color Mixer): pick a colour in the photo and shift just that one, hue, saturation and
+  luminance, with a range. Up to eight.
+- **Snapshots**: save versions of an edit under a name and go back to any of them.
+- **Tethered shooting** (desktop app, macOS and Linux): the camera on a USB cable, the shutter fired
+  from the app (F12) or the camera; each photo opens as it lands, with the previous photo's edit or a
+  preset, in the day's album.
 - **Share how**: a before/after page with a slider, a replay video of the edit, or the recipe inside
   the exported file so anyone can see (and reuse) how it was edited.
 - **Bring your photos**: folders, Lightroom Classic (edits, keywords, labels, virtual copies,
@@ -162,7 +169,9 @@ checks it against the published SHA-256 sums, and restarts the server.
   Dropbox, OneDrive ([setup](docs/cloud-services.md)). Export back to them too.
 - **Open formats**: edits are standard XMP, readable by Lightroom and others. Export to JPEG (optionally
   **HDR**: an Ultra HDR JPEG whose highlights shine on HDR screens and look normal everywhere else), PNG, WebP
-  or TIFF, with an optional watermark; exports keep the camera details and date taken, add your name
+  or TIFF, with an optional watermark and export presets (Instagram, web, print, or your own), and
+  **Content Credentials** (desktop app): a signed record of the edits inside the file, generative AI
+  marked as such; exports keep the camera details and date taken, add your name
   and copyright, and embed an sRGB profile; location is never written.
 
 ## Quick facts
