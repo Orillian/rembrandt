@@ -1,8 +1,8 @@
-// Generative Remove natively (desktop app): MI-GAN (models/inpaint-migan.onnx, the same network the web
-// version runs) in ONNX Runtime, on every CPU core, and on Apple silicon through Core ML, which puts it
-// on the Neural Engine and GPU, where Apple's own Clean Up runs. Several times faster than the web
-// view's single-threaded WebAssembly; the web app uses that when this isn't there (Intel Macs and
-// Windows for now: no prebuilt ONNX Runtime for the one, DirectML to ship for the other).
+// Generative Remove natively (desktop app on Apple silicon): MI-GAN (models/inpaint-migan.onnx, the same
+// network the web version runs) in ONNX Runtime through Core ML, which puts it on the Neural Engine and
+// GPU, where Apple's own Clean Up runs, with every CPU core for the rest. Several times faster than the
+// web view's single-threaded WebAssembly, which the web app uses elsewhere (no prebuilt ONNX Runtime
+// for Intel Macs; Linux's needs a newer glibc than many systems have; Windows would need DirectML).
 //
 // The model comes from the app's own bundled files and is loaded once, ahead of the first fill when
 // the Remove tool opens (warm).

@@ -82,6 +82,17 @@ const LIBRAW: &[&str] = &[
 
 fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    // Apple silicon: ONNX Runtime (Generative Remove, src/inpaint.rs) checks the macOS version with
+    // ___isPlatformVersionAtLeast, from the compiler's runtime library, which Rust's link leaves out.
+    if os == "macos" && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") {
+        if let Ok(out) = std::process::Command::new("xcrun").args(["clang", "--print-resource-dir"]).output() {
+            let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !dir.is_empty() {
+                println!("cargo:rustc-link-search=native={dir}/lib/darwin");
+                println!("cargo:rustc-link-lib=static=clang_rt.osx");
+            }
+        }
+    }
     if matches!(os.as_str(), "macos" | "windows" | "linux") {
         let native = Path::new("../native");
         let mut b = cc::Build::new();

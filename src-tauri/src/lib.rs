@@ -11,7 +11,7 @@ mod credentials;
 mod devcache;
 #[cfg(desktop)]
 mod gpubench;
-#[cfg(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "linux"))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod inpaint;
 #[cfg(desktop)]
 mod tether;
