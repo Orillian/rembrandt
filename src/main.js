@@ -50,7 +50,7 @@ import { buildEditPanel } from './panel-edit.js';
 import { buildCropPanel, CropOverlay, refitCrop } from './tool-crop.js';
 import { buildMaskPanel, MaskOverlay, activeMask, removeMask, applyPick, addMask } from './tool-masks.js';
 import { retouchPasses } from './retouch.js';
-import { hooks as fillHooks } from './inpaint.js';
+import { hooks as fillHooks, warmInpaint } from './inpaint.js';
 import * as clip from './ai/clip.js';
 import { LOOKS, lookTable, parseCube } from './looks.js';
 import { RetouchOverlay, buildRetouchPanel, retouchState, deleteSelected, newSourceForSelected } from './tool-retouch.js';
@@ -273,6 +273,8 @@ const app = {
     if (this.state.tool === t && this.panel) return;
     this.state.tool = t;
     this.state.pick = null;
+    // The Remove tool: its fill model loads now, not on the first Generative Remove.
+    if (t === 'retouch' && aiOn()) warmInpaint();
     document.querySelectorAll('.rail [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
     viewer.dataset.tool = t;
     if (t === 'masks' && !activeMask(this) && this.params?.masks.length) this.state.activeMaskId = this.params.masks[this.params.masks.length - 1].id;

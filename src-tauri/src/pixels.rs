@@ -13,6 +13,9 @@
 //                             `store=1`: develop into the cache only (photos developed ahead, in the
 //                             background); the reply is empty.
 //   POST /preview?key=…&file=…&long=…   body: the RAW file → its camera JPEG, decoded (raw::embedded_preview)
+//   POST /inpaint?key=…&w=…&h=…   body: planar RGB bytes, then the mask (0 = fill) → the filled image,
+//                             planar RGB (inpaint::fill; 404 where there's no native inpainting)
+//   POST /inpaint-warm?key=…   loads the fill model in the background
 //   POST /sign?key=…&mime=image/jpeg   body: u32 length, the manifest JSON, the exported file → the file
 //                             with Content Credentials (credentials::sign)
 //   GET  /file?key=…&path=…   a photo the app may read (in a synced folder, or one it was asked to
@@ -81,6 +84,38 @@ pub fn start(app: &tauri::AppHandle) -> Option<&'static Server> {
 }
 
 const MAX_BODY: usize = 1 << 30;   // 1 GB: the largest RAW files are a few hundred MB
+
+fn query_num(query: &str, name: &str) -> usize {
+    query.split('&').find_map(|kv| kv.strip_prefix(name).and_then(|v| v.strip_prefix('='))).and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
+#[cfg(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "linux"))]
+fn inpaint_route(out: &mut TcpStream, path: &str, w: &usize, h: &usize, mut body: Vec<u8>, cors: &str) -> std::io::Result<()> {
+    let Some(app) = APP.get() else { return write!(out, "HTTP/1.1 503 Service Unavailable\r\n{cors}Content-Length: 0\r\nConnection: close\r\n\r\n") };
+    if path == "/inpaint-warm" {
+        crate::inpaint::warm(app);
+        return write!(out, "HTTP/1.1 204 No Content\r\n{cors}Content-Length: 0\r\nConnection: close\r\n\r\n");
+    }
+    let (w, h) = (*w, *h);
+    if w == 0 || h == 0 || body.len() != 4 * w * h {
+        let msg = "bad size";
+        return write!(out, "HTTP/1.1 400 Bad Request\r\n{cors}Content-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len());
+    }
+    let mask = body.split_off(3 * w * h);
+    match crate::inpaint::fill(app, w, h, body, mask) {
+        Ok(img) => {
+            write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", img.len())?;
+            out.write_all(&img)?;
+            out.flush()
+        }
+        Err(e) => write!(out, "HTTP/1.1 422 Unprocessable Entity\r\n{cors}Content-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{e}", e.len()),
+    }
+}
+// Elsewhere the web app's WebAssembly version does it.
+#[cfg(not(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "linux")))]
+fn inpaint_route(out: &mut TcpStream, _path: &str, _w: &usize, _h: &usize, _body: Vec<u8>, cors: &str) -> std::io::Result<()> {
+    write!(out, "HTTP/1.1 404 Not Found\r\n{cors}Content-Length: 0\r\nConnection: close\r\n\r\n")
+}
 
 /// Decodes %XX escapes (URLSearchParams encodes spaces as '+').
 fn percent_decode(s: &str) -> String {
@@ -165,6 +200,11 @@ fn handle(stream: TcpStream, key: &str) -> std::io::Result<()> {
         write!(out, "HTTP/1.1 200 OK\r\n{cors}Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n")?;
         std::io::copy(&mut f, &mut out)?;
         return out.flush();
+    }
+    if method == "POST" && (path == "/inpaint" || path == "/inpaint-warm") && length <= 64 << 20 {
+        let mut b = vec![0u8; length];
+        reader.read_exact(&mut b)?;
+        return inpaint_route(&mut out, path, &query_num(query, "w"), &query_num(query, "h"), b, &cors);
     }
     if method != "POST" || (path != "/raw" && path != "/preview" && path != "/sign") {
         return fail(&mut out, "404 Not Found", "not found");

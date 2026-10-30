@@ -261,17 +261,23 @@ export async function makeFill(img, op) {
   const cw = C[2] - C[0], ch = C[3] - C[1];
   const src = img.read(C[0], C[1], cw, ch);
   const hole = coverage(pl.points, pl.radius + 2, Math.min(pl.feather, 0.5), C);
-  // Display-encode at a scale that keeps nearly every pixel in range (the network wants 8-bit sRGB).
-  const peaks = new Float32Array(cw * ch);
-  for (let i = 0; i < cw * ch; i++) peaks[i] = Math.max(src[i * 4], src[i * 4 + 1], src[i * 4 + 2]);
-  peaks.sort();
-  const scale = Math.max(1e-4, peaks[Math.floor(peaks.length * 0.995)]);
+  // Display-encode at a scale that keeps nearly every pixel in range (the network wants 8-bit sRGB):
+  // the 99.5th percentile of each pixel's brightest channel, from a histogram (sorting millions of
+  // values for a large removal took about a second).
+  let top = 0;
+  for (let i = 0; i < cw * ch; i++) top = Math.max(top, src[i * 4], src[i * 4 + 1], src[i * 4 + 2]);
+  const BINS = 4096, hist = new Uint32Array(BINS), per = (BINS - 1) / Math.max(top, 1e-9);
+  for (let i = 0; i < cw * ch; i++) hist[Math.floor(Math.max(src[i * 4], src[i * 4 + 1], src[i * 4 + 2], 0) * per)]++;
+  let bin = 0;
+  for (let n = 0, want = Math.floor(cw * ch * 0.995); bin < BINS - 1 && (n += hist[bin]) <= want; bin++);
+  const scale = Math.max(1e-4, (bin + 1) / per);
+  const ENC = Uint8Array.from({ length: 4097 }, (_, j) => Math.round(255 * enc(j / 4096)));
   // Resampled to the working size (nearest is fine: the network works at 512 inside).
   const k = Math.min(1, CONTEXT_PX / Math.max(cw, ch)), sw = Math.max(1, Math.round(cw * k)), sh = Math.max(1, Math.round(ch * k));
   const rgb = new Uint8Array(sw * sh * 3), holes = new Uint8Array(sw * sh);
   for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
     const sx = Math.min(cw - 1, Math.floor((x + 0.5) / k)), sy = Math.min(ch - 1, Math.floor((y + 0.5) / k)), i = (sy * cw + sx);
-    for (let c = 0; c < 3; c++) rgb[(y * sw + x) * 3 + c] = Math.round(255 * enc(Math.min(1, Math.max(0, src[i * 4 + c] / scale))));
+    for (let c = 0; c < 3; c++) rgb[(y * sw + x) * 3 + c] = ENC[Math.round(4096 * Math.min(1, Math.max(0, src[i * 4 + c] / scale)))];
     holes[y * sw + x] = hole[i] > 0.02 ? 1 : 0;
   }
   const out = await inpaint(rgb, holes, sw, sh);

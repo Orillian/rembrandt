@@ -44,6 +44,13 @@ pollster = "1.0"
 webkit2gtk = "2.0"
 libloading = "0.8"
 
+# Generative Remove natively (src/inpaint.rs): ONNX Runtime, prebuilt for Apple silicon (with Core ML)
+# and Linux; Intel Macs and Windows use the web app's WebAssembly version.
+[target.'cfg(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "linux"))'.dependencies]
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "download-binaries", "tls-native"] }
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["std", "download-binaries", "tls-native", "coreml"] }
+
 # Tethering on macOS with ImageCaptureCore (src/tether/mac.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", features = ["exception"] }

@@ -252,6 +252,30 @@ async function nativePreview(file, long) {
   return { bitmap, fullW: swap ? fh : fw, fullH: swap ? fw : fh };
 }
 
+// Generative Remove in the desktop app's native ONNX Runtime (src-tauri/src/inpaint.rs): `planar` RGB
+// bytes and `mask` (0 = fill), w × h → the filled image, planar; null where there's no native version
+// (then not asked again).
+let nativeFill = !!globalThis.__TAURI_INTERNALS__ && !/Android|iPhone|iPad/.test(globalThis.navigator?.userAgent || '');
+export async function nativeInpaint(planar, mask, w, h) {
+  if (!nativeFill) return null;
+  const server = await pixelServer();
+  if (!server) { nativeFill = false; return null; }
+  const body = new Uint8Array(planar.length + mask.length);
+  body.set(planar); body.set(mask, planar.length);
+  const r = await fetch(`http://127.0.0.1:${server.port}/inpaint?key=${server.key}&w=${w}&h=${h}`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body }).catch(() => null);
+  if (!r || r.status === 404) { nativeFill = false; return null; }
+  if (!r.ok) throw new Error(await r.text());
+  return new Uint8Array(await r.arrayBuffer());
+}
+export async function nativeInpaintWarm() {
+  if (!nativeFill) return false;
+  const server = await pixelServer();
+  if (!server) return false;
+  const r = await fetch(`http://127.0.0.1:${server.port}/inpaint-warm?key=${server.key}`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '' }).catch(() => null);
+  if (!r || r.status === 404) { nativeFill = false; return false; }
+  return true;
+}
+
 // Signs an exported file with Content Credentials (src/credentials.js): the signed bytes, or null
 // where there's no desktop app.
 export async function nativeSign(bytes, mime, manifest) {
