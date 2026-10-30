@@ -16,6 +16,7 @@
 // The image is processed in overlapping tiles so memory stays bounded at any size.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
 
+import { floatGL } from './gl.js';
 import { breathe, chunker, pacer, glFinished } from '../jobs.js';
 import { assertAi } from '../workspace.js';
 
@@ -331,9 +332,8 @@ void main() {
 
 class GLRunner {
   constructor(layers) {
-    const c = new OffscreenCanvas(1, 1);
-    const gl = c.getContext('webgl2', { antialias: false, depth: false, premultipliedAlpha: false });
-    if (!gl || !gl.getExtension('EXT_color_buffer_float')) throw new Error('This device has no GPU support for Super Resolution');
+    const gl = floatGL();
+    if (!gl) throw new Error('This device has no GPU support for Super Resolution');
     this.gl = gl;
     const prog = (fs) => {
       const p = gl.createProgram();
@@ -448,8 +448,7 @@ export async function backend(force) {
     const g = await webgpu();
     if (g) return g.f16 ? 'webgpu-f16' : 'webgpu';
   }
-  const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1).getContext('webgl2') : null;
-  return c && c.getExtension('EXT_color_buffer_float') ? 'webgl' : null;
+  return floatGL() ? 'webgl' : null;
 }
 
 // Largest scale the output size allows.

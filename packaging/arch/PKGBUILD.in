@@ -16,5 +16,10 @@ sha256sums=('@SHA256@')
 
 package() {
   bsdtar -xf data.tar.* -C "$pkgdir"
+  # Standard permissions whatever the .deb carried: folders and the app 755, everything else 644
+  # (restrictive ones there broke the icon and desktop entry for some users).
+  find "$pkgdir" -type d -exec chmod 755 {} +
+  find "$pkgdir/usr/share" -type f -exec chmod 644 {} +
+  chmod 755 "$pkgdir"/usr/bin/* 2>/dev/null || true
   install -Dm644 "$pkgdir/usr/share/doc/rembrandt/copyright" "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
 }

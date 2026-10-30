@@ -1496,3 +1496,7 @@ body.tethering #empty { display: none; }
 /* A photo landed: a quick flash over the view */
 .viewer.tether-flash::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; background: #fff8ec; animation: tether-blink 0.5s ease-out forwards; }
 @keyframes tether-blink { from { opacity: 0.38; } to { opacity: 0; } }
+
+/* Messages wrap within the window instead of running off a narrow screen */
+.toast { max-width: calc(100vw - 24px); }
+@media (max-width: 720px) { .toast { white-space: normal; text-align: center; line-height: 1.4; } }

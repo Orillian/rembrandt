@@ -80,7 +80,7 @@ const CONTROLS = [
   [/\bhaze\b/, 'haze', 'Haze'],
   [/\bvignette\b/, 'vignette.amount', 'Vignette'],
   [/\bgrain\b/, 'grain.amount', 'Grain', 0, 100],
-  [/\bsharpen(ing|ness)?\b/, 'sharpen.amount', 'Sharpen', 0, 150],
+  [/\bsharp(en(ing)?|ness)?\b/, 'sharpen.amount', 'Sharpen', 0, 150],
   [/\bnoise( reduction)?\b|\bdenoise\b/, 'nr.luma', 'Noise reduction', 0, 100],
   [/\bcolou?r noise\b/, 'nr.chroma', 'Color noise', 0, 100],
   [/\b(colou?r |red )?speckles?\b|\bred (dots|spots)\b/, 'nr.speckle', 'Color speckles', 0, 100],
@@ -91,6 +91,45 @@ const CONTROLS = [
   [/\bskin\b/, 'ai.skin.amount', 'Skin', 0, 100],
   [/\brefocus\b/, 'ai.refocus.amount', 'Refocus', 0, 100],
 ];
+// Sub-sliders: a control's own settings ("sharpen masking +70", "vignette feather 60"). Named with
+// their control, or right after it ("sharpness +40 and masking +70": masking is sharpening's). Alone,
+// each goes to the control it most often belongs to.
+// group: [words for the control, default for its bare sub-words, { sub: [words, path, label, lo, hi, dp] }]
+const SUBS = {
+  sharpen: [/\bsharp(en(ing)?|ness)?\b/, true, [
+    [/\bmask(ing)?\b/, 'sharpen.masking', 'Sharpen masking', 0, 100],
+    [/\bradius\b/, 'sharpen.radius', 'Sharpen radius', 0.5, 3, 1],
+    [/\bamount\b/, 'sharpen.amount', 'Sharpen', 0, 150],
+  ]],
+  vignette: [/\bvignett\w*/, true, [
+    [/\bmid ?point\b/, 'vignette.midpoint', 'Vignette midpoint', 0, 100],
+    [/\broundness\b|\bround\b/, 'vignette.roundness', 'Vignette roundness'],
+    [/\bfeather(ing)?\b/, 'vignette.feather', 'Vignette feather', 0, 100],
+    [/\bamount\b/, 'vignette.amount', 'Vignette'],
+  ]],
+  grain: [/\bgrain\b/, true, [
+    [/\bsize\b/, 'grain.size', 'Grain size', 0, 100],
+    [/\brough(ness)?\b/, 'grain.roughness', 'Grain roughness', 0, 100],
+    [/\bamount\b/, 'grain.amount', 'Grain', 0, 100],
+  ]],
+  nr: [/\bnoise\b|\bdenois\w*/, true, [
+    [/\b(lum(inance)?|luma)\b/, 'nr.luma', 'Noise reduction', 0, 100],
+    [/\b(colou?r|chroma)\b/, 'nr.chroma', 'Color noise', 0, 100],
+    [/\bspeckles?\b/, 'nr.speckle', 'Color speckles', 0, 100],
+  ]],
+};
+// The sub-slider a clause names, given the control of the clause before (`ctx`), or null.
+function subControl(s, ctx) {
+  const named = Object.entries(SUBS).filter(([, [re]]) => re.test(s));
+  const groups = named.length ? named : ctx && SUBS[ctx] ? [[ctx, SUBS[ctx]]] : Object.entries(SUBS);
+  for (const [g, [, , subs]] of groups) {
+    // "amount" only counts with its control named or just before; "sharpen 40" is the control itself.
+    for (const sub of subs) if (sub[0].test(s) && (sub[1].split('.')[1] !== 'amount' || named.length || ctx === g)) return { group: g, sub };
+  }
+  return null;
+}
+const groupOf = (path) => Object.keys(SUBS).find((g) => path.startsWith(g + '.')) || (path === 'nr.luma' || path === 'nr.chroma' ? 'nr' : null);
+
 const HUES = [/\breds?\b/, /\boranges?\b/, /\byellows?\b/, /\bgreens?\b/, /\b(cyans?|aquas?)\b/, /\bblues?\b/, /\b(lavenders?|purples?)\b/, /\bmagentas?\b/];
 const HSL_PART = [[/\bhue\b/, 'hue', 'hue'], [/\bsat(uration)?\b/, 'sat', 'saturation'], [/\b(lum(inance)?|brightness)\b/, 'lum', 'luminance']];
 
@@ -115,14 +154,18 @@ const UP = /\b(up|increase|raise|boost|more|add|plus|lift|brighter|higher|bump|p
 const DOWN = /\b(down|decrease|lower|reduce|drop|less|minus|subtract|cut|darker|cooler|take( off)?)\b/;
 const RESET = /\b(reset|zero|clear|remove|no|none|neutral|off)\b/;
 // One clause → { path, label, value, lo, hi, dp, says } with `value` the new slider value, or null.
-function exact(s, p) {
+// `ctx`: the control the clause before was about (sub-sliders read alone belong to it).
+function exact(s, p, ctx = null) {
   // "remove the haze" means Dehaze, not the Haze slider back to zero.
   if (/\b(remove|cut|reduce|clear)\b.*\b(haze|fog|mist)\b/.test(s) && !/\d/.test(s)) return null;
   let path, label, lo = -100, hi = 100, dp = 0;
   const hue = HUES.findIndex((re) => re.test(s)), part = HSL_PART.find(([re]) => re.test(s));
+  const sc = subControl(s, ctx);
   if (hue >= 0 && part && !/\bwhite balance\b/.test(s)) {
     path = `hsl.${part[1]}.${hue}`;
     label = `${HSL_NAMES[hue]} ${part[2]}`;
+  } else if (sc) {
+    [, path, label, lo = -100, hi = 100, dp = 0] = sc.sub;
   } else {
     const c = CONTROLS.find(([re]) => re.test(s));
     if (!c) return null;
@@ -164,7 +207,7 @@ export function clausesOf(text) {
     .split(/,|;|\band\b|\bbut\b|\bthen\b|\bwith\b|\s\+\s/).map((c) => c.trim()).filter(Boolean);
 }
 // Is this clause an exact request ("shadows +25") the rules should answer without the model?
-export const isExact = (clause, p) => !!exact(clause, p);
+export const isExact = (clause, p, ctx = null) => !!exact(clause, p, ctx);
 
 // Words → { next, labels } against `p`, or null when nothing is understood. `smart`: Needle's calls
 // per clause (from clausesOf), used where the clause isn't an exact request.
@@ -173,10 +216,12 @@ export function interpret(text, p, smart = null, aspect = 1.5) {
   const t = digits(text.toLowerCase().replace(/black and white/g, 'b&w'))
     // "exposure +0.5 contrast 20": a number followed by another control starts a new clause.
     .replace(/(\d(?:\.\d+)?\s*(?:%|points?|pts?|stops?|ev)?)\s+(?=[a-z])(?!(?:points?|pts?|stops?|ev|brighter|darker|warmer|cooler|up|down|higher|lower)\b)/g, '$1, ');
+  let ctx = null;
   for (const clause of t.split(/,|;|\band\b|\bbut\b|\bthen\b|\bwith\b|\s\+\s/)) {
     const s = clause.trim();
     if (!s) continue;
-    const x = exact(s, next);
+    const x = exact(s, next, ctx);
+    ctx = x ? groupOf(x.path) : null;
     const calls = !x && smart?.get(s);
     if (calls?.length) {
       const r = applyCalls(calls, next, aspect, Math.abs(strength(s)));
@@ -203,7 +248,11 @@ export function interpret(text, p, smart = null, aspect = 1.5) {
 // What an edit changed, as [label, value] for the chat's reply.
 const SHOWN = [['exposure', 'Exposure', 2], ['contrast', 'Contrast'], ['highlights', 'Highlights'], ['shadows', 'Shadows'], ['whites', 'Whites'], ['blacks', 'Blacks'],
   ['temp', 'Temperature'], ['tint', 'Tint'], ['vibrance', 'Vibrance'], ['saturation', 'Saturation'], ['texture', 'Texture'], ['clarity', 'Clarity'], ['dehaze', 'Dehaze'],
-  ['vignette.amount', 'Vignette'], ['grain.amount', 'Grain'], ['sharpen.amount', 'Sharpen'], ['ai.enhance.amount', 'Enhance'], ['ai.blur.amount', 'Lens blur'],
+  ['vignette.amount', 'Vignette'], ['vignette.midpoint', 'Vignette midpoint'], ['vignette.roundness', 'Vignette roundness'], ['vignette.feather', 'Vignette feather'],
+  ['grain.amount', 'Grain'], ['grain.size', 'Grain size'], ['grain.roughness', 'Grain roughness'],
+  ['sharpen.amount', 'Sharpen'], ['sharpen.radius', 'Sharpen radius', 1], ['sharpen.masking', 'Sharpen masking'],
+  ['nr.luma', 'Noise reduction'], ['nr.chroma', 'Color noise'], ['nr.speckle', 'Color speckles'],
+  ['ai.enhance.amount', 'Enhance'], ['ai.blur.amount', 'Lens blur'],
   ['ai.atmos.amount', 'Atmosphere'], ['ai.rays.amount', 'Sunrays'], ['ai.skin.amount', 'Skin'], ['ai.sky.warmth', 'Golden sky']];
 function changes(a, b) {
   if (!a || !b) return [];

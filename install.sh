@@ -228,11 +228,14 @@ install_appimage() {
   mv "$tmp/squashfs-root" "$HOME_DIR/app"
   printf '#!/bin/sh\nexec "%s/app/AppRun" "$@"\n' "$HOME_DIR" > "$BIN_DIR/$PKG"
   chmod +x "$BIN_DIR/$PKG"
+  # The icon and the launcher entry are niceties: if they can't be written (a folder owned by root
+  # from an earlier sudo, say), the app is still installed and runs from $BIN_DIR/$PKG.
   local icon_dir="$DATA/icons/hicolor/512x512/apps" icon
-  mkdir -p "$icon_dir"
   icon="$(find "$HOME_DIR/app" -maxdepth 1 -name '*.png' | head -n1)"
-  if [ -n "$icon" ]; then cp "$icon" "$icon_dir/$PKG.png"; fi
-  cat >"$DESKTOP_DIR/$PKG.desktop" <<EOF
+  if [ -n "$icon" ] && ! { mkdir -p "$icon_dir" && cp "$icon" "$icon_dir/$PKG.png"; } 2>/dev/null; then
+    say "${dim}Couldn't add the icon to $icon_dir (permissions); the app works without it.${off}"
+  fi
+  if ! cat >"$DESKTOP_DIR/$PKG.desktop" 2>/dev/null <<EOF
 [Desktop Entry]
 Type=Application
 Name=$APP
@@ -245,6 +248,7 @@ Categories=Graphics;Photography;
 MimeType=x-scheme-handler/rembrandt;image/jpeg;image/png;image/tiff;image/webp;image/heic;image/avif;image/x-adobe-dng;image/x-canon-cr2;image/x-canon-cr3;image/x-nikon-nef;image/x-sony-arw;image/x-fuji-raf;image/x-olympus-orf;image/x-panasonic-rw2;
 StartupWMClass=$PKG
 EOF
+  then say "${dim}Couldn't add Rembrandt to the app launcher ($DESKTOP_DIR isn't writable); start it with $BIN_DIR/$PKG.${off}"; fi
   if need update-desktop-database; then update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true; fi
   case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "${dim}Add $BIN_DIR to your PATH to start it from a terminal.${off}" ;; esac
 }
@@ -340,10 +344,13 @@ if [ "$OS" = Darwin ]; then
 fi
 
 [ "$OS" = Linux ] || die "the desktop app for $OS is at https://github.com/$REPO/releases/latest (or add --server for Rembrandt in your browser)."
+# A system package first; if that can't be built or installed (permissions, a missing tool), the
+# AppImage in your home folder, which needs no administrator rights.
+fallback() { say "${dim}$1 didn't work; installing the AppImage into your home folder instead.${off}"; install_appimage; }
 if [ "$appimage" = 1 ]; then install_appimage
-elif [ "$ARCH" = x86_64 ] && need pacman && need makepkg && [ "$(id -u)" -ne 0 ]; then install_pacman
-elif need apt-get && need dpkg; then install_deb
-elif need rpm && { need dnf || need zypper; }; then install_rpm
+elif [ "$ARCH" = x86_64 ] && need pacman && need makepkg && [ "$(id -u)" -ne 0 ]; then ( install_pacman ) || fallback "The pacman package"
+elif need apt-get && need dpkg; then ( install_deb ) || fallback "The .deb package"
+elif need rpm && { need dnf || need zypper; }; then ( install_rpm ) || fallback "The .rpm package"
 else install_appimage
 fi
 say ""

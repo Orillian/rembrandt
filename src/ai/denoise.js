@@ -12,6 +12,7 @@
 // (2^(RAW_EV + baseline)), scaled into range with its highlights kept, sRGB-encoded, denoised and
 // decoded back; the DNG's BaselineExposure restores the same brightness.
 // Copyright © 2026 the Rembrandt contributors. Licensed under the GNU GPL v3 or later (see LICENSE).
+import { floatGL } from './gl.js';
 import { webgpu, packMats, convWGSL, convGLSL, VS, TX, TH } from './upscale.js';
 import { H2F } from '../merge.js';
 import { breathe, chunker, pacer, glFinished } from '../jobs.js';
@@ -123,8 +124,8 @@ class GPUNet {
 
 class GLNet {
   constructor(L) {
-    const gl = new OffscreenCanvas(1, 1).getContext('webgl2', { antialias: false, depth: false, premultipliedAlpha: false });
-    if (!gl || !gl.getExtension('EXT_color_buffer_float')) throw new Error('This device has no GPU support for AI Denoise');
+    const gl = floatGL();
+    if (!gl) throw new Error('This device has no GPU support for AI Denoise');
     this.gl = gl;
     const progs = {};
     const prog = (fs) => {
